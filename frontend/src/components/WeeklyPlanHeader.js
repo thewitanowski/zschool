@@ -132,7 +132,8 @@ const WeeklyPlanHeader = ({
   onClearBoard, 
   onForceRefresh,
   userSession, 
-  savingState = false 
+  savingState = false,
+  userProfile = null
 }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '';
@@ -167,11 +168,16 @@ const WeeklyPlanHeader = ({
         <TitleSection>
           <Box>
             <WeekTitle variant="h1">
-              {weekPlan.title || 'Weekly Plan'}
+              {userProfile ? `Welcome, ${userProfile.first_name}!` : (weekPlan.title || 'Weekly Plan')}
             </WeekTitle>
+            {userProfile && weekPlan.title && (
+              <Typography variant="h5" sx={{ opacity: 0.8, mt: 0.5, fontWeight: 500 }}>
+                {weekPlan.title}
+              </Typography>
+            )}
             {weekPlan.week_starting && (
               <Typography variant="h6" sx={{ opacity: 0.9, mt: 0.5 }}>
-                Starting {formatDate(weekPlan.week_starting)}
+                {!userProfile && weekPlan.title ? weekPlan.title + ' - ' : ''}Starting {formatDate(weekPlan.week_starting)}
               </Typography>
             )}
             
@@ -194,6 +200,10 @@ const WeeklyPlanHeader = ({
           </Box>
           
           <Box display="flex" alignItems="center">
+            {userProfile?.avatar_url && (
+              <Avatar src={userProfile.avatar_url} sx={{ width: 40, height: 40, mr: 2 }} />
+            )}
+
             {onClearBoard && userSession && (
               <Tooltip title="Reset board to default state">
                 <ActionButton onClick={onClearBoard} size="large">

@@ -104,6 +104,7 @@ const KanbanBoard = () => {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [showStatistics, setShowStatistics] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [userProfile, setUserProfile] = useState(null);
   const [activeFilters, setActiveFilters] = useState({
     subjects: [],
     days: [],
@@ -119,7 +120,27 @@ const KanbanBoard = () => {
   // Initialize session and fetch data
   useEffect(() => {
     initializeSession();
+    fetchUserProfile();
   }, []);
+
+  const fetchUserProfile = async () => {
+    try {
+      // Now using the real API call since backend is working
+      const response = await axios.get('/api/v1/user/profile');
+      
+      if (response?.data?.first_name) {
+        setUserProfile(response.data);
+        console.log('User profile loaded:', response.data);
+      } else {
+        console.warn('Invalid user profile data received');
+        setUserProfile(null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch user profile:', err);
+      // Gracefully handle errors by continuing without user profile
+      setUserProfile(null);
+    }
+  };
 
   const initializeSession = async () => {
     try {
@@ -365,9 +386,8 @@ const KanbanBoard = () => {
         const canvasUrls = item.canvas_urls || {};
         const specificCanvasUrl = canvasUrls[lessonData.lesson] || `https://learning.acc.edu.au/courses/20564/modules`;
         
-        // Create stable ID based on subject and lesson number
-        const stableId = `lesson-${item.subject.replace(/\s+/g, '-').toLowerCase()}-${lessonData.lesson}`;
-        console.log('🆔 Generated card ID:', stableId, 'for lesson:', lessonData.lesson, 'subject:', item.subject);
+        // Create stable ID based on subject and lesson INDEX, not the lesson content from the AI
+        const stableId = `lesson-${subjectIndex}-${lessonIndex}`;
         
         const card = {
           id: stableId,
@@ -393,24 +413,34 @@ const KanbanBoard = () => {
     // Process assignments - all go to homework column
     const assignments = weekPlanData.assignments || [];
     assignments.forEach((assignment, assignmentIndex) => {
-      // Create stable ID based on assignment title and course
-      const stableAssignmentId = `assignment-${assignment.course_id}-${assignment.title.replace(/\s+/g, '-').toLowerCase()}`;
+      // Create stable ID based on assignment internal ID
+      const assignmentId = assignment.assignment?.id || assignment.id?.replace('assignment_', '') || assignmentIndex;
+      const stableAssignmentId = `assignment-${assignmentId}`;
+      
+      // Extract relevant data from the upcoming events structure
+      const assignmentData = assignment.assignment || {};
+      const dueDate = assignment.all_day_date || assignmentData.due_at;
+      const htmlUrl = assignmentData.html_url || assignment.html_url;
+      const courseId = assignmentData.course_id;
+      const pointsPossible = assignmentData.points_possible;
+      const submissionTypes = assignmentData.submission_types || [assignment.submission_types];
       
       const assignmentCard = {
         id: stableAssignmentId,
         type: 'assignment',
         subject: assignment.context_name || 'Assignment',
         title: assignment.title || 'Untitled Assignment',
-        description: assignment.description || '',
-        dueDate: assignment.end_at || assignment.start_at,
-        canvasLink: assignment.html_url || `https://learning.acc.edu.au/courses/${assignment.course_id}`,
-        courseId: assignment.course_id,
+        description: assignment.description || assignmentData.description || '',
+        dueDate: dueDate,
+        allDayDate: assignment.all_day_date,
+        canvasLink: htmlUrl || `https://learning.acc.edu.au/courses/${courseId}`,
+        courseId: courseId,
+        pointsPossible: pointsPossible,
+        submissionTypes: submissionTypes,
         assignedDay: 'homework', // All assignments go to homework
         priority: 'high', // Assignments are typically high priority
         notes: []
       };
-      console.log(`  📋 Created assignment card: ${assignmentCard.title} → homework`);
-      console.log(`     🔗 Canvas URL: ${assignmentCard.canvasLink}`);
       cards.push(assignmentCard);
     });
 
@@ -444,10 +474,6 @@ const KanbanBoard = () => {
   const filteredAndSortedBoardData = useMemo(() => {
     const processCards = (cards) => {
       let filtered = [...cards];
-
-      // TEMPORARILY DISABLE ALL FILTERING FOR DRAG AND DROP DEBUGGING
-      console.log('🚨 Filtering temporarily disabled for drag debugging');
-      return filtered; // Return all cards without filtering
 
       // Apply search filter
       if (searchTerm) {
@@ -508,24 +534,11 @@ const KanbanBoard = () => {
     };
 
     let result = {};
-    
-    // Ensure all expected columns exist
-    const expectedColumns = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'homework'];
-    
-    expectedColumns.forEach(columnId => {
-      if (activeFilters.days.length === 0 || activeFilters.days.includes(columnId)) {
-        result[columnId] = processCards(boardData[columnId] || []);
-      } else {
-        result[columnId] = [];
-      }
-    });
-
-    // Ensure all expected columns exist, even if empty
     const allColumns = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'homework'];
+    
     allColumns.forEach(columnId => {
-      if (!result[columnId]) {
-        result[columnId] = [];
-      }
+      const columnCards = boardData[columnId] || [];
+      result[columnId] = processCards(columnCards);
     });
 
     return result;
@@ -534,7 +547,8 @@ const KanbanBoard = () => {
   // Check if columns should be shown
   const shouldShowColumn = (columnId) => {
     if (!activeFilters.showEmptyColumns) {
-      return (filteredAndSortedBoardData[columnId] || []).length > 0;
+      // Use the filtered data to check if the column is empty
+      return (filteredAndSortedBoardData[columnId]?.length || 0) > 0;
     }
     return true;
   };
@@ -571,74 +585,82 @@ const KanbanBoard = () => {
   };
 
   const onDragEnd = async (result) => {
-    const { destination, source, draggableId } = result;
-    
-    console.log('🚀 Drag ended:', result);
-    console.log('📦 Current boardData:', boardData);
-    console.log('🔍 Looking for draggableId:', draggableId);
-    
-    // Check if the dragged card exists in any column
-    let foundCard = null;
-    let foundInColumn = null;
-    Object.keys(boardData).forEach(columnId => {
-      const card = boardData[columnId].find(c => c.id === draggableId);
-      if (card) {
-        foundCard = card;
-        foundInColumn = columnId;
-      }
-    });
-    
-    console.log('🎯 Found card:', foundCard, 'in column:', foundInColumn);
+    const { destination, source } = result;
 
-    // If dropped outside a valid droppable area
     if (!destination) {
-      console.log('❌ No destination - dropped outside valid area');
       return;
     }
 
-    // If dropped in the same position
     if (
       destination.droppableId === source.droppableId &&
       destination.index === source.index
     ) {
-      console.log('⏸️ Same position - no change needed');
+      return;
+    }
+    
+    const start = filteredAndSortedBoardData[source.droppableId];
+    const end = filteredAndSortedBoardData[destination.droppableId];
+    
+    if (!start || !end) {
       return;
     }
 
-    // Use the card we already found from boardData search
-    if (!foundCard) {
-      console.log('❌ Could not find card with ID:', draggableId);
-      console.log('📋 Available card IDs:');
-      Object.keys(boardData).forEach(columnId => {
-        console.log(`  ${columnId}:`, boardData[columnId].map(card => card.id));
-      });
-      return;
+    // Find the moved card using its ID from the draggableId
+    const movedCard = start.find(card => card.id === result.draggableId);
+    if (!movedCard) return;
+
+    // If moving within the same column
+    if (start === end) {
+      const newList = Array.from(start);
+      const [reorderedItem] = newList.splice(source.index, 1);
+      newList.splice(destination.index, 0, reorderedItem);
+      
+      const newBoardData = {
+        ...boardData,
+        [source.droppableId]: newList,
+      };
+
+      setBoardData(newBoardData);
+      await saveBoardState(newBoardData);
+    } else {
+      // Moving to a different column
+      const startList = Array.from(start);
+      const [movedItem] = startList.splice(source.index, 1);
+      const endList = Array.from(end);
+      endList.splice(destination.index, 0, movedItem);
+
+      const newBoardData = {
+        ...boardData,
+        [source.droppableId]: startList,
+        [destination.droppableId]: endList,
+      };
+
+      // Now, we need to update the main boardData state by
+      // reconciling the changes with the unfiltered lists.
+      const fullStartList = [...boardData[source.droppableId]];
+      const fullEndList = [...boardData[destination.droppableId]];
+
+      const movedCard = fullStartList.find(c => c.id === movedItem.id);
+      if(!movedCard) return;
+
+      const sourceIdx = fullStartList.findIndex(c => c.id === movedItem.id);
+      fullStartList.splice(sourceIdx, 1);
+      
+      // We need to find the correct index in the destination list,
+      // which can be tricky if the list is filtered.
+      // A simple approach is to add it to the end.
+      // For more precise control, you would need a more complex mapping logic.
+      fullEndList.push(movedCard);
+      
+      const finalBoardData = {
+        ...boardData,
+        [source.droppableId]: fullStartList,
+        [destination.droppableId]: fullEndList
+      };
+
+      setBoardData(finalBoardData);
+      await saveBoardState(finalBoardData);
     }
-
-    console.log('✅ Using found card:', foundCard, 'from column:', foundInColumn);
-
-    // Update the card's assignedDay
-    const updatedCard = {
-      ...foundCard,
-      assignedDay: destination.droppableId
-    };
-
-    // Create new board data by updating the card location
-    const newBoardData = { ...boardData };
-    
-    // Remove the card from its current location in boardData
-    newBoardData[foundInColumn] = newBoardData[foundInColumn].filter(card => card.id !== draggableId);
-    
-    // Add the updated card to the destination column in boardData
-    newBoardData[destination.droppableId] = [...newBoardData[destination.droppableId], updatedCard];
-
-    setBoardData(newBoardData);
-    console.log('✅ Updated board data:', newBoardData);
-
-    // Save the updated state to backend
-    await saveBoardState(newBoardData);
-
-    console.log(`Moved ${draggedCard.subject} from ${source.droppableId} to ${destination.droppableId}`);
   };
 
   const clearBoardState = async () => {
@@ -697,7 +719,7 @@ const KanbanBoard = () => {
   };
 
   const getColumnTitle = (columnId) => {
-    const count = filteredAndSortedBoardData[columnId]?.length || 0;
+    const visibleCount = filteredAndSortedBoardData[columnId]?.length || 0;
     const totalCount = boardData[columnId]?.length || 0;
     
     const titles = {
@@ -709,8 +731,8 @@ const KanbanBoard = () => {
       'homework': 'Homework'
     };
     
-    const filtered = count !== totalCount;
-    return `${titles[columnId]} (${count}${filtered ? `/${totalCount}` : ''})`;
+    const filtered = visibleCount !== totalCount;
+    return `${titles[columnId]} (${visibleCount}${filtered ? `/${totalCount}` : ''})`;
   };
 
   const getColumnColor = (columnId) => {
@@ -860,7 +882,8 @@ const KanbanBoard = () => {
       {/* Weekly Plan Header */}
       {weekPlan && (
         <WeeklyPlanHeader 
-          weekPlan={weekPlan} 
+          weekPlan={weekPlan}
+          userProfile={userProfile}
           onRefresh={() => fetchWeekPlan(true)}
           onClearBoard={clearBoardState}
           onForceRefresh={forceClearAndRefresh}
@@ -892,22 +915,22 @@ const KanbanBoard = () => {
       )}
 
       {/* Kanban Board */}
-      <DragDropContext 
-        onDragEnd={onDragEnd}
-        key={`drag-context-${Object.keys(boardData).map(k => boardData[k].length).join('-')}`}
-      >
+      <DragDropContext onDragEnd={onDragEnd}>
         <BoardContainer>
           {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'homework']
             .map((columnId) => {
               const shouldShow = shouldShowColumn(columnId);
+              const columnCards = filteredAndSortedBoardData[columnId] || [];
+              
               return (
                 <KanbanColumn
                   key={columnId}
                   columnId={columnId}
                   title={getColumnTitle(columnId)}
                   color={getColumnColor(columnId)}
-                  cards={filteredAndSortedBoardData[columnId] || []}
-                  cardCount={(filteredAndSortedBoardData[columnId] || []).length}
+                  cards={columnCards}
+                  // Pass the full card list for the count, but the filtered list for rendering
+                  totalCardCount={(boardData[columnId] || []).length}
                   onViewLesson={handleViewLesson}
                   hidden={!shouldShow}
                 />
@@ -931,7 +954,7 @@ const KanbanBoard = () => {
               </Grid>
               <Grid item xs={12} md={3}>
                 <Typography variant="body2" color="text.secondary">
-                  Filtered Subjects: {Object.values(filteredAndSortedBoardData).flat().length}
+                  Filtered Subjects: {Object.values(filteredAndSortedBoardData).reduce((acc, list) => acc + list.length, 0)}
                 </Typography>
               </Grid>
               <Grid item xs={12} md={3}>

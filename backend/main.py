@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Depends, Query, Body, Header
+from fastapi import FastAPI, HTTPException, Depends, Query, Body, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import logging
@@ -14,6 +14,7 @@ from week_plan_service import week_plan_service
 from board_state_service import board_state_service
 from lesson_content_service import lesson_content_service
 from sqlalchemy import and_
+from user_service import UserService
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,10 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Dependency injection functions
+def get_user_service() -> UserService:
+    return UserService(canvas_client)
 
 # Create FastAPI app
 app = FastAPI(
@@ -113,25 +118,11 @@ async def test_ai_connection():
 # Week Plan endpoints - The main functionality
 @app.get("/api/v1/week-plan/latest")
 async def get_latest_week_plan(
-    force_refresh: bool = Query(False, description="Force refresh from Canvas"),
-    user_session: Optional[str] = Header(None, description="User session ID for board state"),
+    request: Request,
+    force_refresh: bool = False,
     db=Depends(get_db)
 ):
-    """
-    Get the latest weekly plan with optional board state loading.
-    
-    This endpoint fetches the latest Canvas announcement, parses it with AI,
-    and returns the structured JSON. If user_session is provided, it will also
-    load any saved board state for that user.
-    
-    Args:
-        force_refresh: If True, always fetch new data from Canvas
-        user_session: Optional user session ID for loading saved board state
-        db: Database session dependency
-        
-    Returns:
-        Structured weekly plan JSON object with optional saved board state
-    """
+    user_session = request.headers.get('user-session')
     try:
         logger.info(f"Getting latest week plan (force_refresh: {force_refresh}, user_session: {user_session})")
         
@@ -1250,6 +1241,13 @@ async def get_canvas_course_progress(
             status_code=500,
             detail=f"Unable to get course progress: {e}"
         )
+
+@app.get("/api/v1/user/profile")
+async def get_user_profile(user_service: UserService = Depends(get_user_service)):
+    profile = await user_service.get_user_profile()
+    if profile:
+        return profile
+    raise HTTPException(status_code=404, detail="User profile not found")
 
 if __name__ == "__main__":
     import uvicorn

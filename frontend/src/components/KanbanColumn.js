@@ -49,6 +49,7 @@ const ColumnTitle = styled(Typography)(({ theme, color }) => ({
 const CardCount = styled(Box)(({ theme }) => ({
   display: 'inline-flex',
   alignItems: 'center',
+  justifyContent: 'center',
   minWidth: '24px',
   height: '20px',
   padding: '0 8px',
@@ -57,7 +58,6 @@ const CardCount = styled(Box)(({ theme }) => ({
   fontWeight: 600,
   backgroundColor: theme.palette.primary.main,
   color: 'white',
-  marginLeft: theme.spacing(1),
 }));
 
 const DroppableArea = styled(Box, {
@@ -82,7 +82,7 @@ const EmptyState = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
 }));
 
-const KanbanColumn = ({ columnId, title, color, cards, cardCount, onViewLesson, hidden = false }) => {
+const KanbanColumn = ({ columnId, title, color, cards, totalCardCount, onViewLesson, hidden = false }) => {
   return (
     <StyledColumn 
       elevation={3} 
@@ -91,9 +91,11 @@ const KanbanColumn = ({ columnId, title, color, cards, cardCount, onViewLesson, 
     >
       <ColumnHeader color={color}>
         <ColumnTitle color={color}>
-          {title}
+          {title.split(' (')[0]}
         </ColumnTitle>
-        <CardCount label={cardCount} color={color} />
+        <CardCount>
+          {cards.length} / {totalCardCount}
+        </CardCount>
       </ColumnHeader>
 
       <Droppable droppableId={columnId}>

@@ -138,10 +138,8 @@ class WeekPlanService:
                 start_date = monday.strftime('%Y-%m-%d')
                 end_date = sunday.strftime('%Y-%m-%d')
                 
-                # Course IDs to fetch assignments from
-                course_ids = [20564, 20354]  # Add more course IDs as needed
-                
-                assignments = await self.canvas_client.get_weekly_assignments(start_date, end_date, course_ids)
+                # Use the new upcoming events API to get assignments
+                assignments = await self.canvas_client.get_upcoming_events(start_date, end_date)
                 
                 # Add assignments to the parsed data
                 parsed_json['assignments'] = assignments

@@ -231,9 +231,6 @@ const LessonCard = ({ card, index, columnId, onViewLesson }) => {
     }
   };
 
-  // Debug logging for drag issues
-  console.log('🃏 Rendering card with ID:', card.id, 'at index:', index);
-  
   return (
     <Draggable draggableId={card.id} index={index}>
       {(provided, snapshot) => (
@@ -243,6 +240,9 @@ const LessonCard = ({ card, index, columnId, onViewLesson }) => {
           {...provided.dragHandleProps}
           subjectcolor={subjectColor}
           elevation={snapshot.isDragging ? 8 : 2}
+          style={{
+            ...provided.draggableProps.style,
+          }}
         >
           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
             {/* Card Header */}
@@ -313,17 +313,39 @@ const LessonCard = ({ card, index, columnId, onViewLesson }) => {
                     <Typography variant="h6" fontWeight={700} color="text.primary" sx={{ mb: 0.5 }}>
                       📋 {card.title}
                     </Typography>
-                    {card.dueDate && (
-                      <Typography variant="body2" fontWeight={600} color="error.main">
-                        Due: {new Date(card.dueDate).toLocaleDateString()}
+                    
+                    {/* Assignment Details */}
+                    {card.allDayDate && (
+                      <Typography variant="body2" fontWeight={600} color="error.main" sx={{ mb: 0.5 }}>
+                        📅 Due: {card.allDayDate}
                       </Typography>
                     )}
+                    
+                    {card.pointsPossible && (
+                      <Typography variant="body2" color="primary.main" sx={{ mb: 0.5 }}>
+                        🎯 Points: {card.pointsPossible}
+                      </Typography>
+                    )}
+                    
+                    {card.submissionTypes && card.submissionTypes.length > 0 && (
+                      <Typography variant="body2" color="info.main" sx={{ mb: 0.5 }}>
+                        📝 Submit: {Array.isArray(card.submissionTypes) ? card.submissionTypes.join(', ') : card.submissionTypes}
+                      </Typography>
+                    )}
+                    
+                    {card.subject && card.subject !== 'Assignment' && (
+                      <Typography variant="body2" fontWeight={600} color="secondary.main" sx={{ mb: 0.5 }}>
+                        📚 Course: {card.subject}
+                      </Typography>
+                    )}
+                    
                     {card.description && (
                       <Typography variant="body2" color="text.secondary" sx={{ 
                         display: '-webkit-box',
                         WebkitLineClamp: 2,
                         WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden'
+                        overflow: 'hidden',
+                        mt: 0.5
                       }}>
                         {card.description}
                       </Typography>

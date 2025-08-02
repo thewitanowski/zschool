@@ -19,6 +19,7 @@ class CanvasClient:
     def __init__(self):
         self.base_url = "https://learning.acc.edu.au"
         self.bearer_token = os.getenv("CANVAS_BEARER_TOKEN")
+        self.user_id = os.getenv("CANVAS_USER_ID", "54197")  # Default to the provided user ID
         
         if not self.bearer_token:
             raise ValueError("CANVAS_BEARER_TOKEN environment variable is required")
@@ -37,7 +38,34 @@ class CanvasClient:
             headers=self.headers
         )
         
-        logger.info("Canvas client initialized")
+        logger.info(f"Canvas client initialized with user ID: {self.user_id}")
+    
+    async def _get(self, endpoint: str, params: dict = None) -> dict:
+        """
+        Helper method for making GET requests to Canvas API.
+        
+        Args:
+            endpoint: API endpoint path (e.g., "/api/v1/users/123")
+            params: Optional query parameters
+            
+        Returns:
+            JSON response as dictionary
+            
+        Raises:
+            Exception: If API call fails
+        """
+        url = f"{self.base_url}{endpoint}"
+        
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error in _get: {e.response.status_code} - {e.response.text}")
+            raise Exception(f"Canvas API error: {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Error in _get: {e}")
+            raise Exception(f"Request failed: {e}")
     
     def _build_url(self, endpoint: str) -> str:
         """
@@ -259,6 +287,42 @@ class CanvasClient:
         except Exception as e:
             logger.error(f"Error fetching calendar events: {e}")
             raise Exception(f"Failed to fetch calendar events: {e}")
+    
+    async def get_upcoming_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """
+        Get upcoming assignment events for the current week using the user's upcoming events API.
+        
+        Args:
+            start_date: Start date in YYYY-MM-DD format (Monday)
+            end_date: End date in YYYY-MM-DD format (Sunday)
+            
+        Returns:
+            List of assignment event dictionaries
+        """
+        try:
+            url = f"{self.base_url}/api/v1/users/self/upcoming_events"
+            params = {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+            
+            logger.info(f"Fetching upcoming events from {start_date} to {end_date}")
+            
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            
+            events = response.json()
+            # Filter for assignment events only
+            assignments = [event for event in events if event.get('type') == 'assignment']
+            logger.info(f"Fetched {len(assignments)} upcoming assignment events")
+            return assignments
+                    
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error fetching upcoming events: {e.response.status_code} - {e.response.text}")
+            raise Exception(f"Canvas API error: {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Error fetching upcoming events: {e}")
+            return []
     
     async def get_page_content(self, course_id: int, page_url: str) -> Dict[str, Any]:
         """
@@ -517,57 +581,6 @@ class CanvasClient:
         except Exception as e:
             logger.error(f"Failed to fetch items for module {module_id}: {e}")
             raise Exception(f"Canvas module items API error: {e}")
-    
-    async def get_weekly_assignments(self, start_date: str, end_date: str, course_ids: List[int]) -> List[Dict[str, Any]]:
-        """
-        Get assignments for the current week across multiple courses.
-        
-        Args:
-            start_date: Start date in format 'YYYY-MM-DD' (Monday of current week)
-            end_date: End date in format 'YYYY-MM-DD' (Sunday of current week)
-            course_ids: List of course IDs to fetch assignments from
-            
-        Returns:
-            List of assignment objects from calendar events
-            
-        Raises:
-            Exception: If API call fails
-        """
-        all_assignments = []
-        
-        for course_id in course_ids:
-            url = self._build_url("calendar_events")
-            
-            params = {
-                "start_date": start_date,
-                "end_date": end_date,
-                "type": "assignment",
-                "context_codes[]": f"course_{course_id}",
-                "per_page": "50"
-            }
-            
-            try:
-                logger.info(f"Fetching weekly assignments for course {course_id} from {start_date} to {end_date}")
-                
-                response = await self.client.get(url, params=params)
-                response.raise_for_status()
-                
-                assignments = response.json()
-                
-                # Add course_id to each assignment for reference
-                for assignment in assignments:
-                    assignment['course_id'] = course_id
-                    
-                all_assignments.extend(assignments)
-                logger.info(f"Found {len(assignments)} assignments for course {course_id}")
-                
-            except Exception as e:
-                logger.error(f"Failed to fetch assignments for course {course_id}: {e}")
-                # Continue with other courses even if one fails
-                continue
-        
-        logger.info(f"Total assignments fetched: {len(all_assignments)}")
-        return all_assignments
     
     async def close(self):
         """Close the HTTP client connection."""
@@ -940,6 +953,14 @@ class CanvasClient:
                 "error": str(e),
                 "course_id": course_id
             }
+
+    async def get_user_profile(self):
+        """Fetches the user's profile information."""
+        if not self.user_id:
+            logger.warning("No user ID configured, cannot fetch user profile.")
+            return None
+        endpoint = f"/api/v1/users/{self.user_id}"
+        return await self._get(endpoint)
 
 
 # Singleton instance for use throughout the application

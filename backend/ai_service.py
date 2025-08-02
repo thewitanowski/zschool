@@ -12,23 +12,23 @@ logger = logging.getLogger(__name__)
 
 class AIService:
     """
-    AI service for processing Canvas LMS data using Kimi K2 model via Hugging Face.
+    AI service for processing Canvas LMS data using Grok model via X.AI.
     Handles announcement parsing and content transformation.
     """
     
     def __init__(self):
-        self.hf_token = os.getenv("HF_TOKEN")
+        self.xai_token = os.getenv("XAI_TOKEN")
         
-        if not self.hf_token:
-            raise ValueError("HF_TOKEN environment variable is required")
+        if not self.xai_token:
+            raise ValueError("XAI_TOKEN environment variable is required")
         
-        # Initialize OpenAI client with Hugging Face endpoint
+        # Initialize OpenAI client with X.AI endpoint
         self.client = OpenAI(
-            base_url="https://router.huggingface.co/v1",
-            api_key=self.hf_token,
+            base_url="https://api.x.ai/v1",
+            api_key=self.xai_token,
         )
         
-        self.model = "moonshotai/Kimi-K2-Instruct:novita"
+        self.model = "grok-3-mini"
         
     def parse_announcement_to_json(self, html_content: str, target_json_structure: Optional[str] = None) -> Dict[str, Any]:
         """

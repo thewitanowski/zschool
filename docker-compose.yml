@@ -30,7 +30,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://zschool_user:zschool_password@db:5432/zschool
       - HF_TOKEN=${HF_TOKEN}
+      - XAI_TOKEN=${XAI_TOKEN}
       - CANVAS_BEARER_TOKEN=${CANVAS_BEARER_TOKEN}
+      - CANVAS_USER_ID=${CANVAS_USER_ID}
       - ENVIRONMENT=development
     volumes:
       - ./backend:/app
