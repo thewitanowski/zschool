@@ -1,33 +1,34 @@
 # --- Build Stage ---
-# Use an official Node.js runtime as a parent image for the build stage
+# This stage builds the React application
 FROM node:18-alpine AS builder
 
-# Set the working directory in the container
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json from the frontend subdirectory
-COPY frontend/package*.json ./
+# Copy package.json and package-lock.json to the workdir
+# This leverages Docker's layer caching. These files don't change often.
+COPY package*.json ./
 
-# Install dependencies
-# Using 'npm ci' for clean, reproducible installs from package-lock.json
+# Install dependencies cleanly and reproducibly from the lock file
 RUN npm ci
 
-# Copy the rest of the frontend application source code into the container
-COPY frontend/ .
+# Copy the rest of the application source code (public, src, etc.)
+COPY . .
 
-# Build the React application for production
+# Build the React app for production. The output will be in /app/build
 RUN npm run build
 
 
 # --- Production Stage ---
-# Use a lean nginx image for a small production environment
+# This stage serves the built static files using nginx
 FROM nginx:1.25-alpine
 
-# Copy the optimized build output from the 'builder' stage to the nginx web root directory
+# Copy the optimized production build from the 'builder' stage
+# into the nginx public html directory.
 COPY --from=builder /app/build /usr/share/nginx/html
 
-# Expose port 80 to the outside world
+# Expose port 80 for the nginx server
 EXPOSE 80
 
-# The container will run nginx and serve the static files
+# Start nginx in the foreground when the container launches
 CMD ["nginx", "-g", "daemon off;"] 
