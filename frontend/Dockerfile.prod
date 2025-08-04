@@ -5,13 +5,13 @@ FROM node:18-alpine as build
 WORKDIR /app
 
 # Copy package files first to leverage Docker cache
-COPY package*.json ./
+COPY frontend/package*.json ./
 
 # Install all dependencies (including dev dependencies needed for build)
 RUN npm ci --silent
 
-# Copy application code
-COPY . .
+# Copy frontend application code
+COPY frontend/ .
 
 # Build the app for production
 RUN npm run build
