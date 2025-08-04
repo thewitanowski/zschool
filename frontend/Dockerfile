@@ -15,6 +15,11 @@ RUN npm ci
 # Copy the rest of the application source code (public, src, etc.)
 COPY . .
 
+# --- DEBUGGING STEP ---
+# List all files to see what's actually been copied into the container.
+# This will help us understand why index.html isn't being found.
+RUN echo "--- Listing files in /app ---" && ls -la && echo "--- Listing files in /app/public ---" && ls -la public
+
 # Build the React app for production. The output will be in /app/build
 RUN npm run build
 
