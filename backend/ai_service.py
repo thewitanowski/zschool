@@ -537,5 +537,125 @@ Please transform this into a clean, student-friendly format following the JSON s
                 "estimated_time": "Unknown"
             }
 
+    def convert_html_to_components(self, html_content: str) -> list:
+        """
+        Convert Canvas lesson HTML into structured JSON components using LLM.
+        
+        This function implements Phase 1.2 of the PRD - takes raw HTML from Canvas
+        pages and converts it into a clean, renderable JSON array of components.
+        
+        Args:
+            html_content: Raw HTML content from Canvas lesson page
+            
+        Returns:
+            List of component objects in the format:
+            [
+                {"type": "header", "level": 2, "content": "Topic 6 - Time"},
+                {"type": "video", "title": "...", "embed_url": "..."},
+                {"type": "resource_list", "items": [...]},
+                {"type": "instructions", "items": [...]},
+                ...
+            ]
+            
+        Raises:
+            Exception: If AI parsing fails or returns invalid JSON
+        """
+        
+        # Create detailed prompt for HTML-to-component conversion
+        system_prompt = """You are an expert at converting Canvas LMS lesson HTML into clean, structured JSON components.
+
+Your task is to analyze the HTML content and extract meaningful educational components, converting them into a standardized JSON array format.
+
+**Component Types to Identify:**
+
+1. **header** - Any h1, h2, h3, h4, h5, h6 tags or styled heading text
+   Format: {"type": "header", "level": 1-6, "content": "text"}
+
+2. **paragraph** - Regular text content, paragraphs, or explanatory text
+   Format: {"type": "paragraph", "content": "text"}
+
+3. **video** - iframe elements with video content (often from instructuremedia.com)
+   Format: {"type": "video", "title": "video title", "embed_url": "iframe src URL"}
+
+4. **resource_list** - Groups of links to files, PDFs, or external resources
+   Format: {"type": "resource_list", "items": [
+     {"type": "pdf", "title": "worksheet", "url": "..."},
+     {"type": "link", "title": "answers", "url": "..."}
+   ]}
+
+5. **instructions** - Ordered or unordered lists that contain step-by-step instructions
+   Format: {"type": "instructions", "items": ["Step 1 text", "Step 2 text", ...]}
+
+6. **quiz_link** - Links to quizzes or assessments
+   Format: {"type": "quiz_link", "title": "quiz title", "url": "quiz URL"}
+
+**Important Guidelines:**
+- Ignore CSS styling, wrapper divs, and decorative elements
+- Extract meaningful content only
+- Combine related elements logically (e.g., multiple resource links into one resource_list)
+- Preserve the logical order of content
+- Extract clean, readable text without HTML tags
+- For videos, extract the title from the iframe title attribute
+- For resources, identify file types (PDF, worksheet, answers, etc.)
+- Return ONLY valid JSON array, no explanations or markdown
+
+**Expected Output:**
+A JSON array of component objects that represents the educational content structure."""
+
+        user_prompt = f"""Convert this Canvas lesson HTML into structured JSON components:
+
+{html_content}
+
+Return only the JSON array of components."""
+
+        try:
+            logger.info("Converting HTML to structured components using AI")
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Low temperature for consistent structure
+                max_tokens=4000
+            )
+            
+            # Extract and parse the JSON response
+            ai_response = response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks if present
+            if ai_response.startswith('```json'):
+                ai_response = ai_response[7:]
+            if ai_response.startswith('```'):
+                ai_response = ai_response[3:]
+            if ai_response.endswith('```'):
+                ai_response = ai_response[:-3]
+            
+            ai_response = ai_response.strip()
+            
+            # Parse the JSON response
+            components = json.loads(ai_response)
+            
+            # Validate that it's a list
+            if not isinstance(components, list):
+                raise ValueError("AI response is not a valid JSON array")
+            
+            # Basic validation of component structure
+            for component in components:
+                if not isinstance(component, dict) or 'type' not in component:
+                    raise ValueError("Invalid component structure in AI response")
+            
+            logger.info(f"Successfully converted HTML to {len(components)} components")
+            return components
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI response as JSON: {e}")
+            logger.error(f"AI Response: {ai_response[:500]}...")
+            raise Exception(f"AI returned invalid JSON: {e}")
+        except Exception as e:
+            logger.error(f"HTML to components conversion failed: {e}")
+            raise Exception(f"Failed to convert HTML to components: {e}")
+
 # Singleton instance for use throughout the application
 ai_service = AIService() 

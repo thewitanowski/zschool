@@ -13,6 +13,41 @@ class Course(Base):
     modules = relationship("Module", back_populates="course")
     assignments = relationship("Assignment", back_populates="course")
 
+# Phase 1.4 Persistence: AI-Converted Canvas Page Storage
+class ConvertedCanvasPage(Base):
+    __tablename__ = 'converted_canvas_pages'
+    
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=False, comment="Canvas course ID")
+    page_slug = Column(String(500), nullable=False, comment="Canvas page URL slug")
+    
+    # Original Canvas content
+    page_title = Column(String(1000), nullable=False)
+    page_id = Column(Integer, comment="Canvas page ID")
+    canvas_url = Column(String(1000), comment="Full Canvas URL")
+    raw_html_body = Column(Text, comment="Original HTML body from Canvas")
+    
+    # AI-converted content
+    ai_components = Column(JSON, nullable=False, comment="AI-converted structured components")
+    processing_info = Column(JSON, comment="AI processing metadata and status")
+    conversion_success = Column(Boolean, default=True)
+    conversion_error = Column(Text, comment="Error message if conversion failed")
+    
+    # Cache management
+    content_hash = Column(String(64), comment="Hash of raw HTML to detect changes")
+    canvas_updated_at = Column(DateTime, comment="Last updated timestamp from Canvas")
+    first_converted_at = Column(DateTime, default=datetime.datetime.now)
+    last_accessed_at = Column(DateTime, default=datetime.datetime.now)
+    
+    # Performance tracking
+    conversion_time_ms = Column(Integer, comment="Time taken for AI conversion in milliseconds")
+    component_count = Column(Integer, comment="Number of components generated")
+    
+    # Indexing for fast lookups
+    __table_args__ = (
+        UniqueConstraint('course_id', 'page_slug', name='unique_canvas_page'),
+    )
+
 class WeeklyPlan(Base):
     __tablename__ = 'weekly_plans'
     

@@ -7,14 +7,17 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 from database import engine, Base, get_db
-from models import Course, WeeklyPlan, Module, ModuleItem, Assignment, BoardState, LessonContent, WeeklyPlanLesson
+from models import Course, WeeklyPlan, Module, ModuleItem, Assignment, BoardState, LessonContent, WeeklyPlanLesson, ConvertedCanvasPage
 from canvas_client import canvas_client
 from ai_service import ai_service
 from week_plan_service import week_plan_service
 from board_state_service import board_state_service
 from lesson_content_service import lesson_content_service
 from sqlalchemy import and_
+from sqlalchemy.orm import Session
 from user_service import UserService
+from converted_page_service import ConvertedPageService
+import time
 
 # Load environment variables
 load_dotenv()
@@ -26,6 +29,9 @@ logger = logging.getLogger(__name__)
 # Dependency injection functions
 def get_user_service() -> UserService:
     return UserService(canvas_client)
+
+def get_converted_page_service() -> ConvertedPageService:
+    return ConvertedPageService(ai_service)
 
 # Create FastAPI app
 app = FastAPI(
@@ -57,12 +63,60 @@ async def startup_event():
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Basic health check endpoint."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "service": "ZSchool API"
-    }
+    """
+    Health check endpoint for load balancers and monitoring.
+    Returns service status and basic diagnostics.
+    """
+    try:
+        # Test database connection
+        db = next(get_db())
+        try:
+            # Simple query to verify database connectivity
+            db.execute("SELECT 1")
+            db_status = "healthy"
+        except Exception as db_error:
+            db_status = f"unhealthy: {str(db_error)}"
+        finally:
+            db.close()
+            
+        # Test AI service
+        try:
+            # Simple AI service check (without actually calling external API)
+            ai_status = "healthy" if ai_service else "unhealthy"
+        except Exception as ai_error:
+            ai_status = f"unhealthy: {str(ai_error)}"
+            
+        # Test Canvas client
+        try:
+            canvas_status = "healthy" if canvas_client else "unhealthy"
+        except Exception as canvas_error:
+            canvas_status = f"unhealthy: {str(canvas_error)}"
+        
+        overall_status = "healthy" if all([
+            "healthy" in db_status,
+            "healthy" in ai_status, 
+            "healthy" in canvas_status
+        ]) else "degraded"
+        
+        return {
+            "status": overall_status,
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                "database": db_status,
+                "ai_service": ai_status,
+                "canvas_client": canvas_status
+            },
+            "version": "1.0.0"
+        }
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "version": "1.0.0"
+        }
 
 # API status endpoint
 @app.get("/api/v1/status")
@@ -103,6 +157,250 @@ async def get_canvas_urls():
     except Exception as e:
         logger.error(f"Failed to get Canvas URLs: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get Canvas URLs: {e}")
+
+# Phase 1.1 & 1.3 & Persistence: Canvas Page Content Endpoint with AI Processing and Caching
+@app.get("/api/v1/courses/{course_id}/pages/{page_slug}")
+async def get_canvas_page_content(
+    course_id: int,
+    page_slug: str,
+    raw: bool = Query(False, description="Return raw Canvas data instead of processed components"),
+    force_refresh: bool = Query(False, description="Force refresh of cached content"),
+    db: Session = Depends(get_db),
+    converted_page_service: ConvertedPageService = Depends(get_converted_page_service)
+):
+    """
+    Get Canvas page content converted to structured JSON components with caching.
+    
+    - **course_id**: Canvas course ID
+    - **page_slug**: Canvas page URL slug  
+    - **raw**: Return raw Canvas data instead of AI-processed components
+    - **force_refresh**: Force refresh of cached AI-converted content
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"Fetching Canvas page content: course {course_id}, page {page_slug}")
+        
+        # Always fetch fresh Canvas data to check for updates
+        page_content = await canvas_client.get_page_content(course_id, page_slug)
+        logger.info(f"Successfully retrieved page: {page_content.get('title', 'Untitled')}")
+
+        if raw:
+            logger.info("Returning raw Canvas data as requested")
+            return page_content
+
+        html_body = page_content.get('body', '')
+        if not html_body:
+            logger.warning("No HTML body content found in Canvas response")
+            return {
+                "title": page_content.get('title', 'Untitled'),
+                "page_id": page_content.get('page_id'),
+                "updated_at": page_content.get('updated_at'),
+                "url": page_content.get('url'),
+                "components": [],
+                "processed": True,
+                "cached": False,
+                "processing_info": {
+                    "status": "no_content",
+                    "message": "No HTML body content found"
+                }
+            }
+
+        # Check for cached converted content
+        cached_page = converted_page_service.get_converted_page(
+            db, course_id, page_slug, force_refresh
+        )
+        
+        # Determine if we need to re-convert
+        needs_conversion = (
+            cached_page is None or
+            force_refresh or
+            not cached_page.conversion_success or
+            converted_page_service.is_content_changed(
+                cached_page, 
+                html_body,
+                page_content.get('updated_at')
+            )
+        )
+        
+        if not needs_conversion and cached_page:
+            # Return cached content
+            logger.info(f"Returning cached converted content ({cached_page.component_count} components)")
+            cached_page.last_accessed_at = datetime.now()
+            db.commit()
+            
+            return {
+                "title": cached_page.page_title,
+                "page_id": cached_page.page_id,
+                "updated_at": page_content.get('updated_at'),
+                "url": page_content.get('url'),
+                "course_id": course_id,
+                "components": cached_page.ai_components,
+                "processed": True,
+                "cached": True,
+                "processing_info": {
+                    **cached_page.processing_info,
+                    "cached_at": cached_page.first_converted_at.isoformat(),
+                    "last_accessed": cached_page.last_accessed_at.isoformat()
+                }
+            }
+
+        # Convert with AI (new conversion or refresh)
+        conversion_start = time.time()
+        logger.info(f"Converting HTML content ({len(html_body)} chars) to structured components")
+        
+        try:
+            components = ai_service.convert_html_to_components(html_body)
+            conversion_time_ms = int((time.time() - conversion_start) * 1000)
+            
+            logger.info(f"Successfully converted to {len(components)} components in {conversion_time_ms}ms")
+            
+            # Save converted content to cache
+            processing_info = {
+                "status": "success",
+                "components_count": len(components),
+                "original_html_length": len(html_body),
+                "conversion_time_ms": conversion_time_ms,
+                "cached": True
+            }
+            
+            converted_page_service.save_converted_page(
+                db=db,
+                course_id=course_id,
+                page_slug=page_slug,
+                canvas_data=page_content,
+                ai_components=components,
+                processing_info=processing_info,
+                conversion_time_ms=conversion_time_ms,
+                raw_html_body=html_body
+            )
+
+            total_time_ms = int((time.time() - start_time) * 1000)
+            
+            return {
+                "title": page_content.get('title', 'Untitled'),
+                "page_id": page_content.get('page_id'),
+                "updated_at": page_content.get('updated_at'),
+                "url": page_content.get('url'),
+                "course_id": course_id,
+                "components": components,
+                "processed": True,
+                "cached": False,  # Just converted, not from cache
+                "processing_info": {
+                    **processing_info,
+                    "total_time_ms": total_time_ms
+                }
+            }
+            
+        except Exception as ai_error:
+            # Save conversion error for debugging
+            logger.error(f"AI conversion failed: {ai_error}")
+            conversion_time_ms = int((time.time() - conversion_start) * 1000)
+            
+            converted_page_service.save_conversion_error(
+                db=db,
+                course_id=course_id,
+                page_slug=page_slug,
+                canvas_data=page_content,
+                error_message=str(ai_error),
+                raw_html_body=html_body
+            )
+            
+            # Return fallback response
+            return {
+                "title": page_content.get('title', 'Untitled'),
+                "page_id": page_content.get('page_id'),
+                "updated_at": page_content.get('updated_at'),
+                "url": page_content.get('url'),
+                "course_id": course_id,
+                "components": [],
+                "processed": False,
+                "cached": False,
+                "processing_info": {
+                    "status": "ai_error",
+                    "message": str(ai_error),
+                    "fallback": "raw_html_available",
+                    "conversion_time_ms": conversion_time_ms
+                },
+                "raw_html_body": html_body
+            }
+
+    except Exception as e:
+        logger.error(f"Failed to process Canvas page content: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to retrieve or process page content: {e}"
+        )
+
+# New endpoint: Check conversion status for multiple pages
+@app.get("/api/v1/courses/{course_id}/pages/{page_slug}/status")
+async def get_page_conversion_status(
+    course_id: int,
+    page_slug: str,
+    db: Session = Depends(get_db),
+    converted_page_service: ConvertedPageService = Depends(get_converted_page_service)
+):
+    """
+    Check if a specific Canvas page has been AI-converted and cached.
+    
+    - **course_id**: Canvas course ID
+    - **page_slug**: Canvas page URL slug
+    
+    Returns conversion status and metadata.
+    """
+    try:
+        status = converted_page_service.get_conversion_status(db, course_id, page_slug)
+        return {
+            "course_id": course_id,
+            "page_slug": page_slug,
+            **status
+        }
+    except Exception as e:
+        logger.error(f"Failed to get conversion status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to check conversion status: {e}"
+        )
+
+# New endpoint: Batch check conversion status for multiple pages
+@app.post("/api/v1/conversion-status/batch")
+async def get_batch_conversion_status(
+    pages: list[dict],
+    db: Session = Depends(get_db),
+    converted_page_service: ConvertedPageService = Depends(get_converted_page_service)
+):
+    """
+    Check conversion status for multiple pages at once.
+    
+    Request body should be a list of objects with 'course_id' and 'page_slug':
+    [
+        {"course_id": 123, "page_slug": "lesson-1"},
+        {"course_id": 123, "page_slug": "lesson-2"}
+    ]
+    """
+    try:
+        results = []
+        for page_info in pages:
+            course_id = page_info.get('course_id')
+            page_slug = page_info.get('page_slug')
+            
+            if not course_id or not page_slug:
+                continue
+                
+            status = converted_page_service.get_conversion_status(db, course_id, page_slug)
+            results.append({
+                "course_id": course_id,
+                "page_slug": page_slug,
+                **status
+            })
+        
+        return {"results": results}
+    except Exception as e:
+        logger.error(f"Failed to get batch conversion status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to check batch conversion status: {e}"
+        )
 
 # AI Service test endpoints
 @app.get("/api/v1/ai/test")
@@ -1184,11 +1482,9 @@ async def mark_canvas_lesson_complete(
         
         return {
             "status": "success",
-            "message": f"Canvas lesson marked as {'complete' if completed else 'incomplete'}",
-            "course_id": course_id,
             "module_item_id": module_item_id,
             "completed": completed,
-            "canvas_response": result.get("canvas_response"),
+            "canvas_response": result,
             "local_sync": local_sync_result,
             "timestamp": datetime.now().isoformat()
         }
@@ -1199,8 +1495,63 @@ async def mark_canvas_lesson_complete(
         logger.error(f"Failed to mark Canvas lesson as complete: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Unable to update Canvas lesson: {e}"
+            detail=f"Unable to update lesson status: {e}"
         )
+
+@app.get("/api/v1/canvas/lesson-status/{course_id}/{module_id}/{module_item_id}")
+async def get_canvas_lesson_status(
+    course_id: int,
+    module_id: int,
+    module_item_id: int
+):
+    """
+    Get Canvas lesson completion status by course_id, module_id, and module_item_id.
+    Optimized for targeted status syncing without full data refresh.
+    
+    Args:
+        course_id: Canvas course ID
+        module_id: Canvas module ID
+        module_item_id: Canvas module item ID
+        
+    Returns:
+        Canvas completion status information
+    """
+    try:
+        logger.debug(f"Getting Canvas status for course {course_id}, module {module_id}, item {module_item_id}")
+        
+        # Get completion status directly from Canvas
+        canvas_status = await canvas_client.get_lesson_completion_status(course_id, module_item_id, module_id)
+        
+        if not canvas_status.get("success"):
+            return {
+                "success": False,
+                "error": canvas_status.get("error", "Failed to get Canvas status"),
+                "course_id": course_id,
+                "module_id": module_id,
+                "module_item_id": module_item_id
+            }
+        
+        return {
+            "success": True,
+            "course_id": course_id,
+            "module_id": module_id,
+            "module_item_id": module_item_id,
+            "completed": canvas_status.get("completed", False),
+            "completion_requirement": canvas_status.get("completion_requirement"),
+            "title": canvas_status.get("title", ""),
+            "type": canvas_status.get("type", ""),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get Canvas lesson status for {course_id}/{module_id}/{module_item_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "course_id": course_id,
+            "module_id": module_id,
+            "module_item_id": module_item_id
+        }
 
 @app.get("/api/v1/canvas/progress/{course_id}")
 async def get_canvas_course_progress(

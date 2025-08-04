@@ -92,32 +92,29 @@ class WeekPlanService:
             # Step 3: Enhance with Canvas URLs
             logger.info("Fetching Canvas URLs for lessons")
             try:
-                # Default course ID - this should be configurable in the future
-                course_id = 20564
                 classwork = parsed_json.get('classwork', [])
                 
                 if classwork:
-                    lesson_urls = await self.canvas_module_service.get_lesson_urls_for_subjects(course_id, classwork)
+                    # Use the new enhanced Canvas data flow
+                    enhanced_classwork = await self.canvas_module_service.enhance_classwork_with_canvas_data(classwork)
                     
-                    # Add Canvas URLs to each lesson in classwork
-                    for subject_data in classwork:
-                        subject_name = subject_data.get('subject', '').lower().replace(' ', '_')
+                    # Replace the classwork with enhanced version
+                    parsed_json['classwork'] = enhanced_classwork
+                    
+                    # Count successful URL mappings for logging
+                    total_lessons = 0
+                    successful_mappings = 0
+                    
+                    for subject_data in enhanced_classwork:
                         lessons = subject_data.get('lessons', [])
-                        
-                        # Add canvas_urls field to each subject
-                        subject_data['canvas_urls'] = {}
+                        canvas_urls = subject_data.get('canvas_urls', {})
+                        total_lessons += len(lessons)
                         
                         for lesson in lessons:
-                            lesson_key = f"{subject_name}_{lesson.lower()}"
-                            canvas_url = lesson_urls.get(lesson_key)
-                            
-                            if canvas_url:
-                                subject_data['canvas_urls'][lesson] = canvas_url
-                            else:
-                                # Fallback to course modules page
-                                subject_data['canvas_urls'][lesson] = f"https://learning.acc.edu.au/courses/{course_id}/modules"
+                            if lesson in canvas_urls and not canvas_urls[lesson].endswith('/modules'):
+                                successful_mappings += 1
                     
-                    logger.info(f"Added Canvas URLs for {len(lesson_urls)} lessons")
+                    logger.info(f"Enhanced Canvas data: {successful_mappings}/{total_lessons} lessons with specific URLs")
                 else:
                     logger.warning("No classwork found in parsed data")
                     

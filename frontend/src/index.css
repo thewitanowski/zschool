@@ -18,4 +18,18 @@ code {
 
 html, body, #root {
   height: 100%;
+}
+
+/* Basic drag and drop cursor styles */
+[data-rbd-drag-handle-context-id] {
+  cursor: grab;
+}
+
+[data-rbd-drag-handle-draggable-id] {
+  cursor: grab !important;
+}
+
+[data-rbd-drag-handle-context-id]:active,
+[data-rbd-drag-handle-draggable-id]:active {
+  cursor: grabbing !important;
 } 

@@ -213,4 +213,5 @@ yarn-error.log*
 *.sqlite3
 
 # React build
-/frontend/build 
+/frontend/build
+zschoolbrief.md

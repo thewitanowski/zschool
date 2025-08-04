@@ -7,203 +7,437 @@ from canvas_client import CanvasClient
 class CanvasModuleService:
     """
     Service for fetching and mapping Canvas module items to lesson data.
+    Implements the proper API flow: Announcement → Courses → Modules → Module Items
     """
     
     def __init__(self, canvas_client: CanvasClient):
         self.canvas_client = canvas_client
-        self._module_cache: Dict[int, List[Dict]] = {}
-        self._lesson_url_cache: Dict[str, str] = {}
+        self._course_cache: Dict[str, int] = {}  # subject_name -> course_id
+        self._module_cache: Dict[int, List[Dict]] = {}  # course_id -> modules
+        self._items_cache: Dict[str, List[Dict]] = {}  # "{course_id}_{module_id}" -> items
     
-    async def get_lesson_urls_for_subjects(self, course_id: int, subjects_data: List[Dict[str, Any]]) -> Dict[str, str]:
+    async def enhance_classwork_with_canvas_data(self, classwork: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Get Canvas URLs for all lessons across subjects.
+        Enhance classwork data with proper Canvas URLs and metadata following fixlinksanddata.md flow.
         
         Args:
-            course_id: Canvas course ID
-            subjects_data: List of subject data from AI parsing (classwork)
+            classwork: List of subject data from AI parsing (announcement payload)
             
         Returns:
-            Dict mapping lesson keys to Canvas URLs
-            Example: {
-                "maths_b1": "https://learning.acc.edu.au/courses/20564/modules/items/123",
-                "english_1": "https://learning.acc.edu.au/courses/20564/modules/items/456"
-            }
+            Enhanced classwork with canvas_urls, completion_status, and lesson_api_urls
         """
-        lesson_urls = {}
-        
         try:
-            # Get all modules for the course
-            modules = await self.canvas_client.get_course_modules(course_id)
-            logger.info(f"Found {len(modules)} modules for course {course_id}")
+            logger.info("🔄 Starting Canvas data enhancement following fixlinksanddata.md flow")
             
-            # Process each subject to find matching modules
-            for subject_data in subjects_data:
-                subject_name = subject_data.get('subject', '').lower()
-                lessons = subject_data.get('lessons', [])
-                unit = subject_data.get('unit', '').lower()
-                topic = subject_data.get('topic', '').lower()
-                
-                logger.info(f"Processing {subject_name} with {len(lessons)} lessons")
-                
-                # Find modules that might match this subject
-                matching_modules = self._find_matching_modules(modules, subject_name, unit, topic)
-                
-                for module in matching_modules:
-                    module_id = module.get('id')
-                    if module_id:
-                        # Get items for this module
-                        try:
-                            items = await self.canvas_client.get_module_items(course_id, module_id)
-                            
-                            # Map lessons to URLs
-                            for lesson in lessons:
-                                lesson_key = f"{subject_name.replace(' ', '_')}_{lesson.lower()}"
-                                canvas_url = self._find_lesson_url(items, lesson, unit, topic)
-                                
-                                if canvas_url:
-                                    lesson_urls[lesson_key] = canvas_url
-                                    logger.info(f"Mapped {lesson_key} → {canvas_url}")
-                                else:
-                                    # Fallback to module page if specific lesson not found
-                                    lesson_urls[lesson_key] = f"https://learning.acc.edu.au/courses/{course_id}/modules/{module_id}"
-                                    logger.warning(f"No specific URL found for {lesson_key}, using module page")
-                                    
-                        except Exception as e:
-                            logger.error(f"Failed to get items for module {module_id}: {e}")
-                            # Fallback URL
-                            for lesson in lessons:
-                                lesson_key = f"{subject_name.replace(' ', '_')}_{lesson.lower()}"
-                                lesson_urls[lesson_key] = f"https://learning.acc.edu.au/courses/{course_id}/modules"
+            # Step 1: Get all courses to match subjects to course IDs
+            logger.info("📚 Step 1: Fetching all courses for subject matching")
+            courses = await self.canvas_client.get_courses()
+            course_map = self._build_course_map(courses)
             
-            logger.info(f"Successfully mapped {len(lesson_urls)} lesson URLs")
-            return lesson_urls
+            # Step 2: Process each subject in classwork
+            enhanced_classwork = []
+            
+            for subject_data in classwork:
+                logger.info(f"🎯 Processing subject: {subject_data.get('subject')}")
+                enhanced_subject = await self._enhance_subject_data(subject_data, course_map)
+                enhanced_classwork.append(enhanced_subject)
+            
+            logger.info(f"✅ Canvas data enhancement complete for {len(enhanced_classwork)} subjects")
+            return enhanced_classwork
             
         except Exception as e:
-            logger.error(f"Failed to get lesson URLs: {e}")
-            # Return empty dict - frontend will use fallback URLs
-            return {}
+            logger.error(f"❌ Failed to enhance classwork with Canvas data: {e}")
+            # Return original data with fallback URLs
+            return self._add_fallback_urls(classwork)
     
-    def _find_matching_modules(self, modules: List[Dict], subject_name: str, unit: str, topic: str) -> List[Dict]:
+    def _build_course_map(self, courses: List[Dict[str, Any]]) -> Dict[str, int]:
         """
-        Find Canvas modules that match the given subject/unit/topic.
+        Build a mapping from subject names to course IDs.
+        Matches "subject" from announcement to "name" in course payload.
         """
-        matching = []
+        course_map = {}
         
-        # Keywords to look for in module names
-        subject_keywords = self._get_subject_keywords(subject_name)
+        logger.info(f"🗺️  Building course map from {len(courses)} courses")
         
-        for module in modules:
-            module_name = module.get('name', '').lower()
+        for course in courses:
+            course_name = course.get('name', '').strip()
+            course_id = course.get('id')
             
-            # Check if module name contains subject keywords
-            if any(keyword in module_name for keyword in subject_keywords):
-                matching.append(module)
-                logger.debug(f"Module '{module.get('name')}' matches subject '{subject_name}'")
-            
-            # Also check unit/topic matching
-            elif unit and unit in module_name:
-                matching.append(module)
-                logger.debug(f"Module '{module.get('name')}' matches unit '{unit}'")
-            
-            elif topic and topic in module_name:
-                matching.append(module)
-                logger.debug(f"Module '{module.get('name')}' matches topic '{topic}'")
+            if course_name and course_id:
+                # Store exact name match
+                course_map[course_name] = course_id
+                
+                # Also store lowercase version for case-insensitive matching
+                course_map[course_name.lower()] = course_id
+                
+                logger.debug(f"   📋 Mapped course: '{course_name}' → {course_id}")
         
-        return matching
+        logger.info(f"📊 Course map built with {len(course_map)} entries")
+        return course_map
     
-    def _get_subject_keywords(self, subject_name: str) -> List[str]:
+    async def _enhance_subject_data(self, subject_data: Dict[str, Any], course_map: Dict[str, int]) -> Dict[str, Any]:
         """
-        Get keywords to search for in Canvas module names based on subject.
+        Enhance a single subject's data with Canvas URLs and metadata.
         """
-        subject_lower = subject_name.lower()
+        enhanced = subject_data.copy()
+        subject_name = subject_data.get('subject', '')
+        unit = subject_data.get('unit', '')
+        topic = subject_data.get('topic', '')
+        lessons = subject_data.get('lessons', [])
         
-        keyword_map = {
-            'maths': ['math', 'maths', 'mathematics', 'topic', 'unit', 'number', 'algebra', 'geometry'],
-            'english': ['english', 'literacy', 'writing', 'reading', 'language', 'comprehension', 'unit'],
-            'technology': ['technology', 'tech', 'digital', 'ict', 'computer', 'coding'],
-            'health': ['health', 'wellbeing', 'personal development', 'pdhpe'],
-            'pe': ['pe', 'physical education', 'sport', 'fitness', 'pdhpe'],
-            'spiritual and physical fitness': ['spiritual', 'physical', 'fitness', 'sport', 'pdhpe'],
-            'science': ['science', 'biology', 'chemistry', 'physics'],
-            'history': ['history', 'hass', 'social studies'],
-            'geography': ['geography', 'hass', 'social studies']
+        # Step 2A: Match subject to course ID
+        course_id = self._find_course_id(subject_name, course_map)
+        
+        if not course_id:
+            logger.warning(f"⚠️  No course found for subject '{subject_name}' - using fallback URLs")
+            enhanced['canvas_urls'] = {}
+            enhanced['completion_status'] = {}
+            enhanced['lesson_api_urls'] = {}
+            
+            # Add fallback URLs for all lessons
+            for lesson in lessons:
+                enhanced['canvas_urls'][lesson] = "https://learning.acc.edu.au/courses/20564/modules"
+                enhanced['completion_status'][lesson] = False  # Default to not completed
+                enhanced['lesson_api_urls'][lesson] = f"https://learning.acc.edu.au/api/v1/courses/20564/modules"
+            
+            return enhanced
+        
+        logger.info(f"🎯 Found course {course_id} for subject '{subject_name}'")
+        
+        # Step 2B: Get modules for this course
+        modules = await self._get_course_modules(course_id)
+        
+        # Step 2C: Match unit/topic to module ID
+        module_id = self._find_module_id(unit, topic, modules)
+        
+        if not module_id:
+            logger.warning(f"⚠️  No module found for unit '{unit}' or topic '{topic}' in course {course_id}")
+            enhanced['canvas_urls'] = {}
+            enhanced['completion_status'] = {}
+            enhanced['lesson_api_urls'] = {}
+            
+            # Add fallback URLs for all lessons
+            for lesson in lessons:
+                enhanced['canvas_urls'][lesson] = f"https://learning.acc.edu.au/courses/{course_id}/modules"
+                enhanced['completion_status'][lesson] = False
+                enhanced['lesson_api_urls'][lesson] = f"https://learning.acc.edu.au/api/v1/courses/{course_id}/modules"
+            
+            return enhanced
+        
+        logger.info(f"🎯 Found module {module_id} for unit '{unit}' / topic '{topic}'")
+        
+        # Step 2D: Get module items and match lessons
+        items = await self._get_module_items(course_id, module_id)
+        
+        # Step 2E: Match lessons to module items
+        lesson_data = self._match_lessons_to_items(lessons, items, course_id, module_id)
+        
+        # Add the enhanced data
+        enhanced['canvas_urls'] = lesson_data['canvas_urls']
+        enhanced['completion_status'] = lesson_data['completion_status']
+        enhanced['lesson_api_urls'] = lesson_data['lesson_api_urls']
+        enhanced['course_id'] = course_id
+        enhanced['module_id'] = module_id
+        
+        return enhanced
+    
+    def _find_course_id(self, subject_name: str, course_map: Dict[str, int]) -> Optional[int]:
+        """
+        Find course ID by matching subject name to course name.
+        """
+        # Define specific subject mappings for cases where simple matching fails
+        subject_mappings = {
+            "Spiritual and Physical Fitness": "2025 Year 6 Spiritual & Physical Fitness (MPDE)",
+            "Health": "2025 Year 6 HPE (MPDE)",  # Health is part of HPE
+            "Maths": "2025 Year 6 Maths (MPDE)",
+            "Mathematics": "2025 Year 6 Maths (MPDE)",
+            "English": "2025 Year 6 English (MPDE)",
+            "English Literature": "2025 Year 6 English Literature (MPDE)",
+            "PE": "2025 Year 6 HPE (MPDE)",
+            "Physical Education": "2025 Year 6 HPE (MPDE)",
+            "HPE": "2025 Year 6 HPE (MPDE)",
+            "PDHPE": "2025 Year 6 HPE (MPDE)",
+            "Science": "2025 Year 6 Science (MPDE)",
+            "HASS": "2025 Year 6 HASS (MPDE)",
+            "Humanities": "2025 Year 6 HASS (MPDE)",
+            "History": "2025 Year 6 HASS (MPDE)",
+            "Geography": "2025 Year 6 HASS (MPDE)",
+            "Social Studies": "2025 Year 6 HASS (MPDE)",
+            "Arts": "2025 Year 6 Arts (MPDE)",
+            "Art": "2025 Year 6 Arts (MPDE)",
+            "Creative Arts": "2025 Year 6 Arts (MPDE)",
+            "Visual Arts": "2025 Year 6 Arts (MPDE)",
+            # Common abbreviations and alternatives
+            "Lit": "2025 Year 6 English Literature (MPDE)",
+            "Literature": "2025 Year 6 English Literature (MPDE)",
+            "Math": "2025 Year 6 Maths (MPDE)",
+            "Technology": "2025 Year 6 Science (MPDE)",  # Technology often falls under Science
+            "Tech": "2025 Year 6 Science (MPDE)",
+            # Additional courses that might appear in announcements
+            "Communication": "2025 Communication Hub (MPDE)",
+            "Communication Hub": "2025 Communication Hub (MPDE)",
+            "Orientation": "2025 Primary Orientation Course (MPDE)",
+            "Primary Orientation": "2025 Primary Orientation Course (MPDE)",
         }
         
-        # Find matching keywords
-        for key, keywords in keyword_map.items():
-            if key in subject_lower or subject_lower in key:
-                logger.debug(f"📚 Subject '{subject_name}' matched to keywords: {keywords}")
-                return keywords + [subject_lower]
+        # Try specific mapping first
+        if subject_name in subject_mappings:
+            mapped_course_name = subject_mappings[subject_name]
+            if mapped_course_name in course_map:
+                logger.info(f"🎯 Specific mapping: '{subject_name}' → course '{mapped_course_name}' (ID: {course_map[mapped_course_name]})")
+                return course_map[mapped_course_name]
         
-        # Default: use subject name and common terms
-        default_keywords = [subject_lower, 'unit', 'topic', 'lesson']
-        logger.debug(f"📚 Subject '{subject_name}' using default keywords: {default_keywords}")
-        return default_keywords
-    
-    def _find_lesson_url(self, items: List[Dict], lesson: str, unit: str, topic: str) -> Optional[str]:
-        """
-        Find the Canvas URL for a specific lesson within module items.
-        """
-        lesson_lower = lesson.lower()
-        logger.debug(f"🔍 Looking for lesson '{lesson}' in {len(items)} Canvas items")
+        # Try exact match
+        if subject_name in course_map:
+            return course_map[subject_name]
         
-        # Log available items for debugging
-        for item in items[:5]:  # Log first 5 items
-            logger.debug(f"   Canvas item: '{item.get('title', 'No title')}'")
+        # Try case-insensitive match
+        if subject_name.lower() in course_map:
+            return course_map[subject_name.lower()]
         
-        for item in items:
-            title = item.get('title', '').lower()
-            html_url = item.get('html_url')
+        # Try partial matching for common variations
+        subject_lower = subject_name.lower()
+        for course_name, course_id in course_map.items():
+            course_lower = course_name.lower()
             
-            if not html_url:
+            # Check if subject is contained in course name or vice versa
+            if subject_lower in course_lower or course_lower in subject_lower:
+                logger.info(f"🔍 Partial match: '{subject_name}' matched to course '{course_name}'")
+                return course_id
+        
+        # Try more flexible matching for subjects like "Maths" -> "Year 6 Maths"
+        for course_name, course_id in course_map.items():
+            course_lower = course_name.lower()
+            
+            # Check if the subject appears as a word in the course name
+            if f" {subject_lower} " in f" {course_lower} ":
+                logger.info(f"🔍 Word match: '{subject_name}' matched to course '{course_name}'")
+                return course_id
+        
+        return None
+    
+    async def _get_course_modules(self, course_id: int) -> List[Dict[str, Any]]:
+        """
+        Get modules for a course, with caching.
+        """
+        if course_id in self._module_cache:
+            return self._module_cache[course_id]
+        
+        try:
+            modules = await self.canvas_client.get_course_modules(course_id)
+            self._module_cache[course_id] = modules
+            logger.info(f"📦 Fetched {len(modules)} modules for course {course_id}")
+            return modules
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch modules for course {course_id}: {e}")
+            return []
+    
+    def _find_module_id(self, unit: str, topic: str, modules: List[Dict[str, Any]]) -> Optional[int]:
+        """
+        Find module ID by matching unit or topic to module name.
+        """
+        search_terms = []
+        
+        if unit:
+            search_terms.append(unit.strip())
+        if topic:
+            search_terms.append(topic.strip())
+            
+            # Handle topic ranges like "Topic 9 and 10" 
+            if " and " in topic.lower():
+                # Split topic ranges and extract individual topics
+                parts = topic.lower().replace(" and ", ",").split(",")
+                for part in parts:
+                    part = part.strip()
+                    if "topic" in part:
+                        search_terms.append(part)
+                    elif part.isdigit():
+                        search_terms.append(f"topic {part}")
+        
+        if not search_terms:
+            logger.warning("⚠️  No unit or topic to match against modules")
+            return None
+        
+        logger.debug(f"🔍 Searching for terms: {search_terms}")
+        
+        for module in modules:
+            module_name = module.get('name', '')
+            module_id = module.get('id')
+            
+            if not module_name or not module_id:
                 continue
             
-            # Enhanced matching patterns
-            matching_patterns = [
-                # Direct lesson number/code match
-                lesson_lower,
-                # Lesson with spaces
-                f"lesson {lesson_lower}",
-                f"lesson-{lesson_lower}",
-                f"lesson_{lesson_lower}",
-                # With unit
-                f"unit {unit.lower()} lesson {lesson_lower}" if unit else None,
-                f"{unit.lower()} lesson {lesson_lower}" if unit else None,
-                f"unit-{unit.lower()}-lesson-{lesson_lower}" if unit else None,
-                # With topic  
-                f"topic {topic.lower()} lesson {lesson_lower}" if topic else None,
-                f"{topic.lower()} lesson {lesson_lower}" if topic else None,
-                # Common Canvas patterns
-                f"lesson{lesson_lower}",
-                f"l{lesson_lower}",
-                f" {lesson_lower} ",  # Surrounded by spaces
-                f"-{lesson_lower}-",  # Surrounded by dashes
-                f"_{lesson_lower}_",  # Surrounded by underscores
-                # For lessons like "B1", also try just "1"
-                lesson_lower[1:] if lesson_lower.startswith('b') and len(lesson_lower) > 1 else None,
-                # For lessons like "1", also try "01"
-                f"0{lesson_lower}" if lesson_lower.isdigit() and len(lesson_lower) == 1 else None,
-            ]
+            # Try exact matches first
+            for term in search_terms:
+                if term.lower() == module_name.lower():
+                    logger.info(f"🎯 Exact match: '{term}' → module '{module_name}' (ID: {module_id})")
+                    return module_id
             
-            # Remove None values
-            matching_patterns = [p for p in matching_patterns if p]
+            # Try partial matches
+            for term in search_terms:
+                if term.lower() in module_name.lower() or module_name.lower() in term.lower():
+                    logger.info(f"🔍 Partial match: '{term}' → module '{module_name}' (ID: {module_id})")
+                    return module_id
             
-            for pattern in matching_patterns:
-                if pattern in title:
-                    logger.info(f"✅ Found lesson '{lesson}' → '{item.get('title')}' using pattern '{pattern}'")
-                    return html_url
+            # Try topic number matching for cases like "Topic 9 and 10" -> "Topic 9"
+            for term in search_terms:
+                term_lower = term.lower()
+                module_lower = module_name.lower()
+                
+                # Extract topic numbers from both term and module name
+                if "topic" in term_lower and "topic" in module_lower:
+                    import re
+                    term_numbers = re.findall(r'\btopic\s*(\d+)', term_lower)
+                    module_numbers = re.findall(r'\btopic\s*(\d+)', module_lower)
+                    
+                    if term_numbers and module_numbers:
+                        # If term contains a number that matches module number
+                        if term_numbers[0] in module_numbers:
+                            logger.info(f"🔢 Topic number match: '{term}' (topic {term_numbers[0]}) → module '{module_name}' (topic {module_numbers[0]})")
+                            return module_id
         
-        # If no specific match, log the failure
-        logger.warning(f"❌ No specific URL found for lesson '{lesson}' in {len(items)} items")
-        logger.debug(f"   Available titles: {[item.get('title', 'No title') for item in items[:10]]}")
+        logger.warning(f"⚠️  No module found for unit '{unit}' or topic '{topic}'")
+        return None
+    
+    async def _get_module_items(self, course_id: int, module_id: int) -> List[Dict[str, Any]]:
+        """
+        Get module items, with caching.
+        """
+        cache_key = f"{course_id}_{module_id}"
         
-        # Return the first lesson-like item as fallback
+        if cache_key in self._items_cache:
+            return self._items_cache[cache_key]
+        
+        try:
+            items = await self.canvas_client.get_module_items(course_id, module_id)
+            self._items_cache[cache_key] = items
+            logger.info(f"📝 Fetched {len(items)} items for module {module_id} in course {course_id}")
+            return items
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch items for module {module_id} in course {course_id}: {e}")
+            return []
+    
+    def _match_lessons_to_items(self, lessons: List[str], items: List[Dict[str, Any]], 
+                               course_id: int, module_id: int) -> Dict[str, Dict[str, str]]:
+        """
+        Match lessons from announcement to module items.
+        Returns canvas_urls, completion_status, and lesson_api_urls.
+        """
+        result = {
+            'canvas_urls': {},
+            'completion_status': {},
+            'lesson_api_urls': {}
+        }
+        
+        logger.info(f"🔗 Matching {len(lessons)} lessons to {len(items)} module items")
+        
+        for lesson in lessons:
+            matched_item = self._find_matching_item(lesson, items)
+            
+            if matched_item:
+                # Extract data as specified in fixlinksanddata.md
+                html_url = matched_item.get('html_url', '')
+                completion_data = matched_item.get('completion_requirement', {})
+                completed = completion_data.get('completed', False)
+                api_url = matched_item.get('url', '')
+                
+                result['canvas_urls'][lesson] = html_url
+                result['completion_status'][lesson] = completed
+                result['lesson_api_urls'][lesson] = api_url
+                
+                logger.info(f"✅ Matched lesson '{lesson}' → '{matched_item.get('title')}'")
+                logger.debug(f"   🔗 Canvas URL: {html_url}")
+                logger.debug(f"   ✔️  Completed: {completed}")
+                logger.debug(f"   🔌 API URL: {api_url}")
+            else:
+                # Fallback URLs
+                result['canvas_urls'][lesson] = f"https://learning.acc.edu.au/courses/{course_id}/modules/{module_id}"
+                result['completion_status'][lesson] = False
+                result['lesson_api_urls'][lesson] = f"https://learning.acc.edu.au/api/v1/courses/{course_id}/modules/{module_id}/items"
+                
+                logger.warning(f"⚠️  No match found for lesson '{lesson}' - using fallback URLs")
+        
+        return result
+    
+    def _find_matching_item(self, lesson: str, items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Find module item that matches the lesson ID/title.
+        """
+        lesson_lower = lesson.lower().strip()
+        
+        # Log available items for debugging
+        logger.debug(f"🔍 Looking for lesson '{lesson}' in {len(items)} items:")
+        for item in items[:5]:  # Log first 5 for debugging
+            logger.debug(f"   📄 Item: '{item.get('title', 'No title')}'")
+        
         for item in items:
-            title = item.get('title', '').lower()
-            html_url = item.get('html_url')
+            title = item.get('title', '').lower().strip()
             
-            if 'lesson' in title and html_url:
-                logger.info(f"📋 Using fallback lesson URL for '{lesson}' → '{item.get('title')}'")
-                return html_url
+            if not title:
+                continue
+            
+            # Try various matching patterns
+            if self._lesson_matches_title(lesson_lower, title):
+                return item
         
-        return None 
+        return None
+    
+    def _lesson_matches_title(self, lesson: str, title: str) -> bool:
+        """
+        Check if a lesson matches a module item title using various patterns.
+        """
+        # Exact match
+        if lesson == title:
+            return True
+        
+        # Common patterns to try
+        patterns = [
+            lesson,  # Direct match
+            f"lesson {lesson}",  # "lesson 1"
+            f"lesson-{lesson}",  # "lesson-1"  
+            f"lesson_{lesson}",  # "lesson_1"
+            f"lesson{lesson}",   # "lesson1"
+            f"l{lesson}",        # "l1"
+            f" {lesson} ",       # " 1 " (surrounded by spaces)
+            f"-{lesson}-",       # "-1-" (surrounded by dashes)
+            f"_{lesson}_",       # "_1_" (surrounded by underscores)
+        ]
+        
+        # For lessons like "B1", also try just "1"
+        if lesson.startswith('b') and len(lesson) > 1:
+            patterns.append(lesson[1:])
+        
+        # For lessons like "1", also try "01"
+        if lesson.isdigit() and len(lesson) == 1:
+            patterns.append(f"0{lesson}")
+        
+        for pattern in patterns:
+            if pattern in title:
+                logger.debug(f"✅ Pattern match: lesson '{lesson}' matched title '{title}' using pattern '{pattern}'")
+                return True
+        
+        return False
+    
+    def _add_fallback_urls(self, classwork: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Add fallback URLs when Canvas API calls fail.
+        """
+        enhanced_classwork = []
+        
+        for subject_data in classwork:
+            enhanced = subject_data.copy()
+            lessons = subject_data.get('lessons', [])
+            
+            enhanced['canvas_urls'] = {}
+            enhanced['completion_status'] = {}
+            enhanced['lesson_api_urls'] = {}
+            
+            for lesson in lessons:
+                enhanced['canvas_urls'][lesson] = "https://learning.acc.edu.au/courses/20564/modules"
+                enhanced['completion_status'][lesson] = False
+                enhanced['lesson_api_urls'][lesson] = "https://learning.acc.edu.au/api/v1/courses/20564/modules"
+            
+            enhanced_classwork.append(enhanced)
+        
+        logger.warning("⚠️  Using fallback URLs for all lessons due to API errors")
+        return enhanced_classwork 

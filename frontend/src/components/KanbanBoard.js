@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import axios from 'axios';
 import {
   Box,
@@ -33,21 +33,15 @@ import BoardFilters from './BoardFilters';
 import BoardStatistics from './BoardStatistics';
 import LessonViewer from './LessonViewer';
 
-const StyledContainer = styled(Container)(({ theme }) => ({
-  padding: theme.spacing(3),
+const StyledContainer = styled('div')(() => ({
   minHeight: '100vh',
-  backgroundColor: '#f5f7fa',
+  padding: '20px',
+  // Minimal container styling
 }));
 
-const BoardContainer = styled(Box)(({ theme }) => ({
+const BoardContainer = styled('div')(() => ({
   display: 'flex',
-  gap: theme.spacing(3),
-  overflowX: 'auto',
-  minHeight: '70vh',
-  padding: theme.spacing(2),
-  borderRadius: theme.spacing(2),
-  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  backdropFilter: 'blur(10px)',
+  // Absolutely nothing else - no gap, no padding, no background, no border-radius
 }));
 
 const FilterToggleButton = styled(Button)(({ theme }) => ({
@@ -122,6 +116,123 @@ const KanbanBoard = () => {
     initializeSession();
     fetchUserProfile();
   }, []);
+
+  // Add visibility-based refresh for real-time completion status updates
+  useEffect(() => {
+    let refreshTimeout;
+    
+    const handleVisibilityChange = () => {
+      if (!document.hidden && userSession) {
+        // Clear any pending refresh to avoid multiple rapid calls
+        if (refreshTimeout) {
+          clearTimeout(refreshTimeout);
+        }
+        
+        // Add a small delay to avoid excessive API calls when rapidly switching tabs
+        refreshTimeout = setTimeout(() => {
+          console.log('🔄 Tab became visible - syncing completion status from Canvas');
+          syncCompletionStatus(); // Use targeted sync instead of full refresh
+          
+          // Show a subtle notification that auto-hides quickly
+          showNotification('Syncing lesson status...', 'info');
+        }, 500); // 500ms delay
+      }
+    };
+
+    // Add event listener for visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Cleanup function to remove event listener and timeout
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+      }
+    };
+  }, [userSession]); // Re-run if userSession changes
+
+  // Targeted completion status sync - only updates done/to do chips
+  const syncCompletionStatus = async () => {
+    try {
+      console.log('🎯 Starting targeted completion status sync...');
+      
+      let updatedCards = false;
+      let syncedCount = 0;
+      const newBoardData = { ...boardData };
+      
+      // Iterate through all columns and cards to find lessons with Canvas data
+      for (const [columnId, cards] of Object.entries(boardData)) {
+        if (!cards || cards.length === 0) continue;
+        
+        const updatedColumnCards = [...cards];
+        
+        for (let i = 0; i < cards.length; i++) {
+          const card = cards[i];
+          
+          // Only sync lesson cards that have Canvas course data and canvas links
+          if (card.type === 'lesson' && card.courseId && card.moduleId && card.canvasLink) {
+            try {
+              // Extract module_item_id from Canvas URL
+              // URL format: https://learning.acc.edu.au/courses/{course_id}/modules/items/{module_item_id}
+              const urlMatch = card.canvasLink.match(/\/modules\/items\/(\d+)/);
+              
+              if (urlMatch && urlMatch[1]) {
+                const moduleItemId = parseInt(urlMatch[1]);
+                const moduleId = card.moduleId;
+                
+                // Make targeted API call with correct format: course_id/module_id/module_item_id
+                const response = await axios.get(`/api/v1/canvas/lesson-status/${card.courseId}/${moduleId}/${moduleItemId}`);
+                
+                if (response.data.success) {
+                  const canvasCompleted = response.data.completed || false;
+                  const currentStatus = card.status;
+                  const newStatus = canvasCompleted ? 'done' : 'todo';
+                  
+                  // Only update if status actually changed
+                  if (currentStatus !== newStatus) {
+                    console.log(`✅ Status change: ${card.subject} Lesson ${card.lesson}: ${currentStatus} → ${newStatus}`);
+                    
+                    updatedColumnCards[i] = {
+                      ...card,
+                      status: newStatus
+                    };
+                    
+                    updatedCards = true;
+                  }
+                  
+                  syncedCount++;
+                } else {
+                  console.debug(`Failed to get Canvas status for ${card.subject} Lesson ${card.lesson}: ${response.data.error}`);
+                }
+              } else {
+                console.debug(`Could not extract module item ID from URL: ${card.canvasLink}`);
+              }
+            } catch (error) {
+              // Silently ignore errors for individual lessons to avoid spam
+              console.debug(`Failed to sync status for ${card.subject} Lesson ${card.lesson}:`, error.message);
+            }
+          }
+        }
+        
+        newBoardData[columnId] = updatedColumnCards;
+      }
+      
+      // Only update state if we actually found changes
+      if (updatedCards) {
+        setBoardData(newBoardData);
+        console.log(`🔄 Completion status sync complete - ${syncedCount} lessons checked, UI updated with changes`);
+        showNotification(`Lesson status updated!`, 'success');
+      } else {
+        console.log(`✅ Completion status sync complete - ${syncedCount} lessons checked, no changes detected`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Failed to sync completion status:', error);
+      // Fallback to full refresh if targeted sync fails
+      console.log('🔄 Falling back to full refresh...');
+      fetchWeekPlan(true);
+    }
+  };
 
   const fetchUserProfile = async () => {
     try {
@@ -371,6 +482,14 @@ const KanbanBoard = () => {
 
   const transformDataToCards = (weekPlanData) => {
     console.log('🔄 Transforming data to cards with lessons and assignments:', weekPlanData);
+    console.log('📊 Raw classwork data with Canvas URLs:', weekPlanData.classwork?.map(item => ({
+      subject: item.subject,
+      unit: item.unit,
+      topic: item.topic,
+      lessons: item.lessons,
+      canvas_urls: item.canvas_urls
+    })));
+    
     const cards = [];
     
     // Process lessons from classwork
@@ -384,10 +503,27 @@ const KanbanBoard = () => {
       lessonDistribution.forEach((lessonData, lessonIndex) => {
         // Get Canvas URL for this specific lesson
         const canvasUrls = item.canvas_urls || {};
+        const completionStatus = item.completion_status || {};
+        const lessonApiUrls = item.lesson_api_urls || {};
+        
+        console.log(`🔍 Debug Canvas data for ${item.subject}:`, {
+          allCanvasUrls: canvasUrls,
+          completionStatus: completionStatus,
+          lessonApiUrls: lessonApiUrls,
+          lookingForLesson: lessonData.lesson,
+          availableKeys: Object.keys(canvasUrls),
+          unit: item.unit,
+          topic: item.topic
+        });
+        
         const specificCanvasUrl = canvasUrls[lessonData.lesson] || `https://learning.acc.edu.au/courses/20564/modules`;
+        const isCompleted = completionStatus[lessonData.lesson] || false;
+        const lessonApiUrl = lessonApiUrls[lessonData.lesson] || null;
         
         // Create stable ID based on subject and lesson INDEX, not the lesson content from the AI
         const stableId = `lesson-${subjectIndex}-${lessonIndex}`;
+        
+        console.log(`🆔 Creating card with ID: ${stableId} for ${item.subject} Lesson ${lessonData.lesson}`);
         
         const card = {
           id: stableId,
@@ -400,12 +536,18 @@ const KanbanBoard = () => {
           days: item.days,
           notes: item.notes,
           assignedDay: lessonData.assignedDay,
-          // Use specific Canvas URL for this lesson
+          // Enhanced Canvas data from proper API flow
           canvasLink: specificCanvasUrl,
+          status: isCompleted ? 'done' : 'todo', // Set status based on Canvas completion
+          lessonApiUrl: lessonApiUrl, // For Convert with AI functionality
+          courseId: item.course_id || null,
+          moduleId: item.module_id || null,
           priority: 'medium' // Default priority
         };
         console.log(`  ➕ Created lesson card: ${item.subject} Lesson ${lessonData.lesson} → ${lessonData.assignedDay}`);
         console.log(`     🔗 Canvas URL: ${specificCanvasUrl}`);
+        console.log(`     ✔️  Completed: ${isCompleted}`);
+        console.log(`     🔌 API URL: ${lessonApiUrl}`);
         cards.push(card);
       });
     });
@@ -541,6 +683,13 @@ const KanbanBoard = () => {
       result[columnId] = processCards(columnCards);
     });
 
+    // Check for duplicate IDs across all columns
+    const allIds = Object.values(result).flat().map(card => card.id);
+    const duplicates = allIds.filter((id, index) => allIds.indexOf(id) !== index);
+    if (duplicates.length > 0) {
+      console.error('🚨 Duplicate card IDs found:', duplicates);
+    }
+
     return result;
   }, [boardData, searchTerm, activeFilters]);
 
@@ -586,8 +735,15 @@ const KanbanBoard = () => {
 
   const onDragEnd = async (result) => {
     const { destination, source } = result;
+    
+    console.log('🎯 Drag ended:', {
+      draggableId: result.draggableId,
+      source: source,
+      destination: destination
+    });
 
     if (!destination) {
+      console.log('❌ No destination - drag cancelled');
       return;
     }
 
@@ -595,25 +751,67 @@ const KanbanBoard = () => {
       destination.droppableId === source.droppableId &&
       destination.index === source.index
     ) {
-      return;
-    }
-    
-    const start = filteredAndSortedBoardData[source.droppableId];
-    const end = filteredAndSortedBoardData[destination.droppableId];
-    
-    if (!start || !end) {
+      console.log('❌ Same position - no change needed');
       return;
     }
 
-    // Find the moved card using its ID from the draggableId
-    const movedCard = start.find(card => card.id === result.draggableId);
-    if (!movedCard) return;
+    // Use original boardData arrays for drag and drop operations
+    const sourceColumn = boardData[source.droppableId];
+    const destColumn = boardData[destination.droppableId];
+    
+    if (!sourceColumn || !destColumn) {
+      console.error('Source or destination column not found:', { source: source.droppableId, dest: destination.droppableId });
+      return;
+    }
 
+    // Find the moved card using its ID from the draggableId in the original data
+    const movedCard = sourceColumn.find(card => card.id === result.draggableId);
+    if (!movedCard) {
+      console.error('Card not found in source column:', result.draggableId);
+      return;
+    }
+
+    // Get the visible cards to determine the correct insertion index
+    const visibleSourceCards = filteredAndSortedBoardData[source.droppableId] || [];
+    const visibleDestCards = filteredAndSortedBoardData[destination.droppableId] || [];
+    
     // If moving within the same column
-    if (start === end) {
-      const newList = Array.from(start);
-      const [reorderedItem] = newList.splice(source.index, 1);
-      newList.splice(destination.index, 0, reorderedItem);
+    if (source.droppableId === destination.droppableId) {
+      const newList = Array.from(sourceColumn);
+      
+      // Find the actual index in the full list
+      const actualSourceIndex = newList.findIndex(card => card.id === result.draggableId);
+      if (actualSourceIndex === -1) return;
+      
+      // Remove the card
+      const [reorderedItem] = newList.splice(actualSourceIndex, 1);
+      
+             // Calculate the new position based on visible cards
+       let actualDestIndex;
+       if (destination.index === 0) {
+         actualDestIndex = 0;
+       } else if (destination.index >= visibleDestCards.length) {
+         actualDestIndex = newList.length;
+       } else {
+         // Find the actual position by looking for the card at the destination index in visible list
+         const targetVisibleCard = visibleDestCards[destination.index];
+         if (targetVisibleCard) {
+           actualDestIndex = newList.findIndex(card => card.id === targetVisibleCard.id);
+           if (actualDestIndex === -1) actualDestIndex = newList.length;
+         } else {
+           actualDestIndex = newList.length;
+         }
+       }
+       
+       console.log('📍 Reordering within column:', {
+         sourceIndex: actualSourceIndex,
+         destIndex: actualDestIndex,
+         visibleDestIndex: destination.index,
+         totalCards: newList.length + 1
+       });
+      
+      // Insert at the new position
+      newList.splice(actualDestIndex, 0, reorderedItem);
       
       const newBoardData = {
         ...boardData,
@@ -624,42 +822,52 @@ const KanbanBoard = () => {
       await saveBoardState(newBoardData);
     } else {
       // Moving to a different column
-      const startList = Array.from(start);
-      const [movedItem] = startList.splice(source.index, 1);
-      const endList = Array.from(end);
-      endList.splice(destination.index, 0, movedItem);
+      const sourceList = Array.from(sourceColumn);
+      const destList = Array.from(destColumn);
+      
+      // Find and remove from source
+      const actualSourceIndex = sourceList.findIndex(card => card.id === result.draggableId);
+      if (actualSourceIndex === -1) return;
+      
+      const [movedItem] = sourceList.splice(actualSourceIndex, 1);
+      
+             // Calculate insertion position in destination
+       let actualDestIndex;
+       if (destination.index === 0) {
+         actualDestIndex = 0;
+       } else if (destination.index >= visibleDestCards.length) {
+         actualDestIndex = destList.length;
+       } else {
+         // Find the actual position by looking for the card at the destination index in visible list
+         const targetVisibleCard = visibleDestCards[destination.index];
+         if (targetVisibleCard) {
+           actualDestIndex = destList.findIndex(card => card.id === targetVisibleCard.id);
+           if (actualDestIndex === -1) actualDestIndex = destList.length;
+         } else {
+           actualDestIndex = destList.length;
+         }
+       }
+       
+       console.log('🎯 Moving between columns:', {
+         from: source.droppableId,
+         to: destination.droppableId,
+         cardId: result.draggableId,
+         sourceIndex: actualSourceIndex,
+         destIndex: actualDestIndex,
+         visibleDestIndex: destination.index
+       });
+      
+      // Insert into destination
+      destList.splice(actualDestIndex, 0, movedItem);
 
       const newBoardData = {
         ...boardData,
-        [source.droppableId]: startList,
-        [destination.droppableId]: endList,
+        [source.droppableId]: sourceList,
+        [destination.droppableId]: destList,
       };
 
-      // Now, we need to update the main boardData state by
-      // reconciling the changes with the unfiltered lists.
-      const fullStartList = [...boardData[source.droppableId]];
-      const fullEndList = [...boardData[destination.droppableId]];
-
-      const movedCard = fullStartList.find(c => c.id === movedItem.id);
-      if(!movedCard) return;
-
-      const sourceIdx = fullStartList.findIndex(c => c.id === movedItem.id);
-      fullStartList.splice(sourceIdx, 1);
-      
-      // We need to find the correct index in the destination list,
-      // which can be tricky if the list is filtered.
-      // A simple approach is to add it to the end.
-      // For more precise control, you would need a more complex mapping logic.
-      fullEndList.push(movedCard);
-      
-      const finalBoardData = {
-        ...boardData,
-        [source.droppableId]: fullStartList,
-        [destination.droppableId]: fullEndList
-      };
-
-      setBoardData(finalBoardData);
-      await saveBoardState(finalBoardData);
+      setBoardData(newBoardData);
+      await saveBoardState(newBoardData);
     }
   };
 
@@ -703,16 +911,25 @@ const KanbanBoard = () => {
 
   // Debug function to log all current card IDs
   const logAllCardIds = () => {
-    console.log('📋 All current card IDs:');
+    console.log('📋 All current card IDs in boardData:');
     Object.keys(boardData).forEach(columnId => {
-      console.log(`  ${columnId}:`, boardData[columnId].map(card => card.id));
+      const cards = boardData[columnId] || [];
+      console.log(`  ${columnId}:`, cards.map(card => ({ id: card.id, subject: card.subject, lesson: card.lesson })));
+    });
+    
+    console.log('📋 All current card IDs in filteredAndSortedBoardData:');
+    Object.keys(filteredAndSortedBoardData).forEach(columnId => {
+      const cards = filteredAndSortedBoardData[columnId] || [];
+      console.log(`  ${columnId}:`, cards.map(card => ({ id: card.id, subject: card.subject, lesson: card.lesson })));
     });
   };
   
   // Call this when board data changes
   React.useEffect(() => {
-    logAllCardIds();
-  }, [boardData]);
+    if (Object.keys(boardData).some(key => boardData[key].length > 0)) {
+      logAllCardIds();
+    }
+  }, [boardData, filteredAndSortedBoardData]);
 
   const handleCloseNotification = () => {
     setNotification({ ...notification, open: false });
@@ -878,12 +1095,13 @@ const KanbanBoard = () => {
   }
 
   return (
-    <StyledContainer maxWidth={false}>
+    <StyledContainer>
       {/* Weekly Plan Header */}
       {weekPlan && (
         <WeeklyPlanHeader 
           weekPlan={weekPlan}
           userProfile={userProfile}
+          boardData={boardData}
           onRefresh={() => fetchWeekPlan(true)}
           onClearBoard={clearBoardState}
           onForceRefresh={forceClearAndRefresh}
@@ -915,7 +1133,12 @@ const KanbanBoard = () => {
       )}
 
       {/* Kanban Board */}
-      <DragDropContext onDragEnd={onDragEnd}>
+      <DragDropContext 
+        onDragStart={(initial) => {
+          console.log('🚀 Drag started:', initial.draggableId);
+        }}
+        onDragEnd={onDragEnd}
+      >
         <BoardContainer>
           {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'homework']
             .map((columnId) => {
@@ -1001,6 +1224,9 @@ const KanbanBoard = () => {
         lessonId={selectedLesson?.lessonId}
         courseId={selectedLesson?.courseId}
         moduleItemId={selectedLesson?.moduleItemId}
+        // Phase 1.4: New props for AI-converted lessons
+        pageSlug={selectedLesson?.pageSlug}
+        isAiConverted={selectedLesson?.isAiConverted}
         onLessonUpdate={handleLessonUpdate}
         onBookmarkChange={handleBookmarkChange}
       />

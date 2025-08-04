@@ -203,12 +203,17 @@ const LessonViewer = ({
   courseId = null, 
   moduleItemId = null,
   demoLessonNumber = null,
+  // Phase 1.4: New props for AI-converted lessons
+  pageSlug = null,
+  isAiConverted = false,
   onLessonUpdate = null, // Callback for when lesson status changes
   onBookmarkChange = null // Callback for when bookmark status changes
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lessonContent, setLessonContent] = useState(null);
+  // Phase 1.4: New state for AI-converted content
+  const [aiConvertedContent, setAiConvertedContent] = useState(null);
   const [bookmarked, setBookmarked] = useState(card?.bookmarked || false);
   const [completed, setCompleted] = useState(false);
   const [read, setRead] = useState(false);
@@ -216,12 +221,223 @@ const LessonViewer = ({
   const [canvasStatus, setCanvasStatus] = useState(null);
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
 
+  // Phase 1.4: Component renderer functions for AI-converted content
+  const renderAiComponent = (component, index) => {
+    switch (component.type) {
+      case 'header':
+        const HeaderComponent = component.level === 1 ? 'h1' : 
+                               component.level === 2 ? 'h2' : 
+                               component.level === 3 ? 'h3' : 
+                               component.level === 4 ? 'h4' : 
+                               component.level === 5 ? 'h5' : 'h6';
+        return (
+          <Typography 
+            key={index}
+            component={HeaderComponent}
+            variant={`h${Math.min(component.level, 6)}`}
+            sx={{ 
+              mb: 2, 
+              mt: index > 0 ? 3 : 0,
+              fontWeight: 600,
+              color: 'primary.main' 
+            }}
+          >
+            {component.content}
+          </Typography>
+        );
+
+      case 'paragraph':
+        return (
+          <Typography 
+            key={index}
+            variant="body1" 
+            sx={{ mb: 2, lineHeight: 1.6 }}
+          >
+            {component.content}
+          </Typography>
+        );
+
+      case 'video':
+        return (
+          <Box key={index} sx={{ mb: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+              <VideoIcon sx={{ mr: 1, color: 'primary.main' }} />
+              {component.title}
+            </Typography>
+            <Paper 
+              elevation={2} 
+              sx={{ 
+                p: 2, 
+                borderRadius: 2,
+                background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)'
+              }}
+            >
+              <Box 
+                sx={{ 
+                  position: 'relative',
+                  paddingBottom: '56.25%', // 16:9 aspect ratio
+                  height: 0,
+                  overflow: 'hidden',
+                  borderRadius: 1
+                }}
+              >
+                <iframe
+                  src={component.embed_url}
+                  title={component.title}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    border: 'none'
+                  }}
+                  allowFullScreen
+                />
+              </Box>
+            </Paper>
+          </Box>
+        );
+
+      case 'resource_list':
+        return (
+          <Box key={index} sx={{ mb: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+              <LinkIcon sx={{ mr: 1, color: 'info.main' }} />
+              Resources
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {component.items.map((item, itemIndex) => (
+                <Paper 
+                  key={itemIndex}
+                  elevation={1}
+                  sx={{ 
+                    p: 2, 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    transition: 'all 0.2s ease',
+                    '&:hover': { 
+                      elevation: 3,
+                      transform: 'translateY(-1px)'
+                    }
+                  }}
+                >
+                  <FileIcon sx={{ mr: 2, color: 'error.main' }} />
+                  <Box sx={{ flexGrow: 1 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {item.title}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {item.type?.toUpperCase() || 'FILE'}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<LaunchIcon />}
+                    onClick={() => window.open(item.url, '_blank')}
+                    sx={{ ml: 2 }}
+                  >
+                    Open
+                  </Button>
+                </Paper>
+              ))}
+            </Box>
+          </Box>
+        );
+
+      case 'instructions':
+        return (
+          <Box key={index} sx={{ mb: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+              <AssignmentIcon sx={{ mr: 1, color: 'warning.main' }} />
+              Instructions
+            </Typography>
+            <Paper elevation={1} sx={{ p: 2, backgroundColor: 'rgba(255, 193, 7, 0.1)' }}>
+              <List dense>
+                {component.items.map((instruction, itemIndex) => (
+                  <ListItem key={itemIndex} sx={{ pl: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 32 }}>
+                      <Typography 
+                        variant="subtitle2" 
+                        sx={{ 
+                          color: 'warning.main',
+                          fontWeight: 600,
+                          minWidth: 20
+                        }}
+                      >
+                        {itemIndex + 1}.
+                      </Typography>
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary={instruction}
+                      primaryTypographyProps={{
+                        variant: 'body2',
+                        sx: { lineHeight: 1.5 }
+                      }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Paper>
+          </Box>
+        );
+
+      case 'quiz_link':
+        return (
+          <Box key={index} sx={{ mb: 3 }}>
+            <Paper 
+              elevation={2}
+              sx={{ 
+                p: 3, 
+                backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                border: '2px solid',
+                borderColor: 'secondary.main',
+                borderRadius: 2
+              }}
+            >
+              <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+                <PsychologyIcon sx={{ mr: 1, color: 'secondary.main' }} />
+                Assessment
+              </Typography>
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                {component.title}
+              </Typography>
+              <Button
+                variant="contained"
+                color="secondary"
+                startIcon={<LaunchIcon />}
+                onClick={() => window.open(component.url, '_blank')}
+              >
+                Take Quiz
+              </Button>
+            </Paper>
+          </Box>
+        );
+
+      default:
+        // Fallback for unknown component types
+        return (
+          <Box key={index} sx={{ mb: 2 }}>
+            <Paper elevation={1} sx={{ p: 2, backgroundColor: 'grey.100' }}>
+              <Typography variant="caption" color="text.secondary">
+                Unknown component type: {component.type}
+              </Typography>
+              <pre style={{ fontSize: '0.75rem', marginTop: 8 }}>
+                {JSON.stringify(component, null, 2)}
+              </pre>
+            </Paper>
+          </Box>
+        );
+    }
+  };
+
   // Fetch lesson content when dialog opens
   useEffect(() => {
-    if (open && (lessonId || (courseId && moduleItemId) || demoLessonNumber)) {
+    if (open && (lessonId || (courseId && moduleItemId) || demoLessonNumber || (courseId && pageSlug && isAiConverted))) {
       fetchLessonContent();
     }
-  }, [open, lessonId, courseId, moduleItemId, demoLessonNumber]);
+  }, [open, lessonId, courseId, moduleItemId, demoLessonNumber, pageSlug, isAiConverted]);
 
   const fetchLessonContent = async () => {
     try {
@@ -230,6 +446,21 @@ const LessonViewer = ({
       
       let response;
       
+      // Phase 1.4: Handle AI-converted lessons
+      if (isAiConverted && courseId && pageSlug) {
+        console.log('🤖 Fetching AI-converted lesson content:', { courseId, pageSlug });
+        response = await axios.get(`/api/v1/courses/${courseId}/pages/${pageSlug}`);
+        
+        if (response?.data?.components) {
+          setAiConvertedContent(response.data);
+          setCompleted(false); // Reset completion status for new content
+          return;
+        } else {
+          throw new Error('Invalid AI-converted content structure');
+        }
+      }
+      
+      // Existing logic for other lesson types
       if (demoLessonNumber) {
         // Fetch demo lesson content
         response = await axios.get(`/api/v1/lessons/demo/${demoLessonNumber}`);
@@ -561,12 +792,19 @@ const LessonViewer = ({
           <Box display="flex" justifyContent="space-between" alignItems="center">
             <Box>
               <Typography variant="h5">
-                {loading ? 'Loading Lesson...' : lessonContent?.title || 'Lesson Content'}
+                {loading ? 'Loading Lesson...' : 
+                 aiConvertedContent?.title || 
+                 lessonContent?.title || 
+                 'Lesson Content'}
               </Typography>
-              {lessonContent?.type && (
+              {/* Phase 1.4: Enhanced subtitle for AI-converted content */}
+              {(aiConvertedContent || lessonContent?.type) && (
                 <Box display="flex" alignItems="center" gap={2} sx={{ mt: 0.5 }}>
                   <Typography variant="subtitle1" sx={{ opacity: 0.9 }}>
-                    {lessonContent.type} • {lessonContent.estimated_time || '5-10 minutes'}
+                    {aiConvertedContent ? 
+                      `AI-Converted • ${aiConvertedContent.processing_info?.components_count || 0} Components` :
+                      `${lessonContent.type} • ${lessonContent.estimated_time || '5-10 minutes'}`
+                    }
                   </Typography>
                   <StatusIndicator status={getLessonStatus()}>
                     {getStatusIcon()}
@@ -576,7 +814,7 @@ const LessonViewer = ({
               )}
             </Box>
             <Box display="flex" alignItems="center" gap={1}>
-              {lessonContent && (
+              {(aiConvertedContent || lessonContent) && (
                 <>
                   <ActionButtonGroup variant="contained" color="primary">
                     <Button
@@ -642,6 +880,81 @@ const LessonViewer = ({
           {loading && renderLoadingState()}
           
           {error && renderErrorState()}
+          
+          {/* Phase 1.4: AI-Converted Content Rendering */}
+          {aiConvertedContent && !loading && (
+            <ContentContainer>
+              {/* AI Processing Status */}
+              <Alert 
+                severity="success" 
+                sx={{ mb: 3, backgroundColor: 'rgba(76, 175, 80, 0.1)' }}
+                icon={<CheckIcon />}
+              >
+                <Typography variant="body2">
+                  <strong>AI-Processed Content:</strong> This lesson has been converted to an interactive format • 
+                  <strong> Components:</strong> {aiConvertedContent.processing_info?.components_count || 0} • 
+                  <strong> Status:</strong> {aiConvertedContent.processing_info?.status || 'unknown'}
+                </Typography>
+              </Alert>
+
+              {/* AI Content Header */}
+              <SummaryCard elevation={3}>
+                <CardContent>
+                  <Box display="flex" alignItems="center" mb={2}>
+                    <PsychologyIcon sx={{ mr: 1, color: 'primary.main' }} />
+                    <Typography variant="h6" fontWeight={600}>
+                      {aiConvertedContent.title}
+                    </Typography>
+                  </Box>
+                  
+                  <Box display="flex" flexWrap="wrap" gap={1}>
+                    <MetadataChip variant="time">
+                      <ScheduleIcon sx={{ fontSize: '14px' }} />
+                      Interactive Content
+                    </MetadataChip>
+                    <MetadataChip variant="type">
+                      <PsychologyIcon sx={{ fontSize: '14px' }} />
+                      AI-Converted
+                    </MetadataChip>
+                    <MetadataChip variant="default">
+                      {aiConvertedContent.processing_info?.components_count || 0} Components
+                    </MetadataChip>
+                  </Box>
+                </CardContent>
+              </SummaryCard>
+
+              {/* AI Components Rendering */}
+              <Box sx={{ mt: 3 }}>
+                {aiConvertedContent.components && aiConvertedContent.components.length > 0 ? (
+                  aiConvertedContent.components.map((component, index) => 
+                    renderAiComponent(component, index)
+                  )
+                ) : (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      No components were generated from this lesson content.
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
+
+              {/* Processing Information */}
+              {aiConvertedContent.processing_info && (
+                <Accordion sx={{ mt: 3 }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Processing Details
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2" color="text.secondary" component="pre">
+                      {JSON.stringify(aiConvertedContent.processing_info, null, 2)}
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+              )}
+            </ContentContainer>
+          )}
           
           {lessonContent && !loading && (
             <ContentContainer>

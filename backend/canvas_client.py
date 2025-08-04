@@ -218,7 +218,7 @@ class CanvasClient:
         url = self._build_url(f"courses/{course_id}/modules/{module_id}/items")
         
         params = {
-            "include[]": ["content_details", "mastery_paths"],
+            "include[]": ["content_details", "mastery_paths", "completion_requirements"],
             "per_page": "100"
         }
         
@@ -788,13 +788,14 @@ class CanvasClient:
                 "completed": completed
             }
 
-    async def get_lesson_completion_status(self, course_id: int, module_item_id: int) -> dict:
+    async def get_lesson_completion_status(self, course_id: int, module_item_id: int, module_id: int = None) -> dict:
         """
         Get the completion status of a specific lesson from Canvas.
         
         Args:
             course_id: Canvas course ID
             module_item_id: Canvas module item ID
+            module_id: Canvas module ID (required for correct API path)
             
         Returns:
             Dict containing completion status information
@@ -802,29 +803,52 @@ class CanvasClient:
         try:
             logger.info(f"Getting completion status for lesson {module_item_id}")
             
-            # Get module item details which includes completion info
-            url = f"{self.base_url}/api/v1/courses/{course_id}/modules/items/{module_item_id}"
+            if not module_id:
+                # If module_id not provided, we need to find it by searching through modules
+                # This is less efficient but provides fallback
+                modules = await self.get_course_modules(course_id)
+                module_id = None
+                for module in modules:
+                    items = await self.get_module_items(course_id, module['id'])
+                    for item in items:
+                        if item['id'] == module_item_id:
+                            module_id = module['id']
+                            break
+                    if module_id:
+                        break
+                
+                if not module_id:
+                    return {
+                        "success": False,
+                        "error": "Could not find module containing this item",
+                        "module_item_id": module_item_id
+                    }
             
-            async with httpx.AsyncClient() as client:
-                headers = {"Authorization": f"Bearer {self.bearer_token}"}
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                
-                module_item = response.json()
-                
-                # Check completion requirements and status
-                completion_requirement = module_item.get("completion_requirement", {})
-                completed = module_item.get("completed", False)
-                
-                return {
-                    "success": True,
-                    "module_item_id": module_item_id,
-                    "completed": completed,
-                    "completion_requirement": completion_requirement.get("type"),
-                    "title": module_item.get("title", ""),
-                    "type": module_item.get("type", "")
-                }
-                
+            # Get module item details using the correct Canvas API format
+            url = self._build_url(f"courses/{course_id}/modules/{module_id}/items/{module_item_id}")
+            params = {"include[]": "content_details"}
+            
+            # Use the configured client instead of creating a new one
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            
+            module_item = response.json()
+            
+            # Check completion requirements and status
+            completion_requirement = module_item.get("completion_requirement", {})
+            # Canvas uses completion_requirement.completed for the actual status
+            completed = completion_requirement.get("completed", False)
+            
+            return {
+                "success": True,
+                "module_item_id": module_item_id,
+                "module_id": module_id,
+                "completed": completed,
+                "completion_requirement": completion_requirement.get("type"),
+                "title": module_item.get("title", ""),
+                "type": module_item.get("type", "")
+            }
+            
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error getting completion status: {e}")
             return {

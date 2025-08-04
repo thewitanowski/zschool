@@ -18,6 +18,7 @@ import {
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
   School as SchoolIcon,
+  Assignment as AssignmentIcon,
   Announcement as AnnouncementIcon,
   RestartAlt as ResetIcon,
   Save as SaveIcon,
@@ -79,6 +80,8 @@ const InfoCard = styled(Box)(({ theme }) => ({
   backgroundColor: 'rgba(255, 255, 255, 0.15)',
   borderRadius: theme.spacing(1),
   backdropFilter: 'blur(5px)',
+  minHeight: '80px', // Ensure consistent height across all tiles
+  height: '100%', // Fill the grid item height
 }));
 
 const ActionButton = styled(IconButton)(({ theme }) => ({
@@ -131,9 +134,10 @@ const WeeklyPlanHeader = ({
   onRefresh, 
   onClearBoard, 
   onForceRefresh,
-  userSession, 
+  userSession,
   savingState = false,
-  userProfile = null
+  userProfile = null,
+  boardData = {}
 }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '';
@@ -161,6 +165,67 @@ const WeeklyPlanHeader = ({
       return total + (work.lessons ? work.lessons.length : 0);
     }, 0);
   };
+
+  // Calculate lesson completion statistics
+  const getLessonStats = () => {
+    if (!boardData || Object.keys(boardData).length === 0) {
+      return { total: getTotalLessons(), done: 0, todo: getTotalLessons() };
+    }
+
+    let total = 0, done = 0;
+    
+    // Count lesson cards across all columns
+    Object.values(boardData).forEach(cards => {
+      if (Array.isArray(cards)) {
+        cards.forEach(card => {
+          if (card.type === 'lesson') {
+            total++;
+            if (card.status === 'done') {
+              done++;
+            }
+          }
+        });
+      }
+    });
+
+    return {
+      total,
+      done,
+      todo: total - done
+    };
+  };
+
+  // Calculate homework/assignment statistics
+  const getHomeworkStats = () => {
+    if (!boardData || Object.keys(boardData).length === 0) {
+      return { total: weekPlan.assignments?.length || 0, done: 0, todo: weekPlan.assignments?.length || 0 };
+    }
+
+    let total = 0, done = 0;
+    
+    // Count assignment cards (typically in homework column)
+    Object.values(boardData).forEach(cards => {
+      if (Array.isArray(cards)) {
+        cards.forEach(card => {
+          if (card.type === 'assignment') {
+            total++;
+            if (card.status === 'done') {
+              done++;
+            }
+          }
+        });
+      }
+    });
+
+    return {
+      total,
+      done,
+      todo: total - done
+    };
+  };
+
+  const lessonStats = getLessonStats();
+  const homeworkStats = getHomeworkStats();
 
   return (
     <HeaderContainer elevation={8}>
@@ -231,7 +296,7 @@ const WeeklyPlanHeader = ({
         <InfoGrid container spacing={3}>
           {/* Teacher Information */}
           {weekPlan.teacher && (
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <InfoCard>
                 <Avatar sx={{ bgcolor: 'rgba(255, 255, 255, 0.3)' }}>
                   <PersonIcon />
@@ -250,7 +315,7 @@ const WeeklyPlanHeader = ({
 
           {/* Class Connect */}
           {weekPlan.class_connect && (
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <InfoCard>
                 <Avatar sx={{ bgcolor: 'rgba(255, 255, 255, 0.3)' }}>
                   <CalendarIcon />
@@ -267,8 +332,8 @@ const WeeklyPlanHeader = ({
             </Grid>
           )}
 
-          {/* Quick Stats */}
-          <Grid item xs={12} md={4}>
+          {/* This Week - with completion stats */}
+          <Grid item xs={12} sm={6} md={3}>
             <InfoCard>
               <Avatar sx={{ bgcolor: 'rgba(255, 255, 255, 0.3)' }}>
                 <SchoolIcon />
@@ -278,8 +343,35 @@ const WeeklyPlanHeader = ({
                   This Week
                 </Typography>
                 <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                  {weekPlan.classwork?.length || 0} subjects, {getTotalLessons()} lessons
+                  {weekPlan.classwork?.length || 0} subjects, {lessonStats.total} lessons
                 </Typography>
+                {lessonStats.total > 0 && (
+                  <Typography variant="caption" sx={{ opacity: 0.7, display: 'block' }}>
+                    {lessonStats.done} done • {lessonStats.todo} to do
+                  </Typography>
+                )}
+              </Box>
+            </InfoCard>
+          </Grid>
+
+          {/* Homework - with completion stats */}
+          <Grid item xs={12} sm={6} md={3}>
+            <InfoCard>
+              <Avatar sx={{ bgcolor: 'rgba(255, 255, 255, 0.3)' }}>
+                <AssignmentIcon />
+              </Avatar>
+              <Box>
+                <Typography variant="body1" fontWeight={600}>
+                  Homework
+                </Typography>
+                <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                  {homeworkStats.total} assignment{homeworkStats.total !== 1 ? 's' : ''}
+                </Typography>
+                {homeworkStats.total > 0 && (
+                  <Typography variant="caption" sx={{ opacity: 0.7, display: 'block' }}>
+                    {homeworkStats.done} done • {homeworkStats.todo} to do
+                  </Typography>
+                )}
               </Box>
             </InfoCard>
           </Grid>
@@ -295,9 +387,15 @@ const WeeklyPlanHeader = ({
             <AnnouncementIcon sx={{ fontSize: '14px', mr: 0.5 }} />
             {`${weekPlan.announcements?.length || 0} Announcements`}
           </StatTag>
-          {getTotalLessons() > 0 && (
+          {lessonStats.total > 0 && (
             <StatTag>
-              {`${getTotalLessons()} Total Lessons`}
+              {`${lessonStats.total} Lessons (${lessonStats.done} Done)`}
+            </StatTag>
+          )}
+          {homeworkStats.total > 0 && (
+            <StatTag>
+              <AssignmentIcon sx={{ fontSize: '14px', mr: 0.5 }} />
+              {`${homeworkStats.total} Assignments (${homeworkStats.done} Done)`}
             </StatTag>
           )}
           {userSession && (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droppable } from 'react-beautiful-dnd';
+import { Droppable } from '@hello-pangea/dnd';
 import {
   Box,
   Typography,
@@ -8,21 +8,20 @@ import {
 import { styled } from '@mui/material/styles';
 import LessonCard from './LessonCard';
 
-const StyledColumn = styled(Paper)(({ theme, color }) => ({
-  minWidth: '320px',
-  maxWidth: '320px',
-  borderRadius: theme.spacing(2),
-  padding: theme.spacing(2),
-  background: 'rgba(255, 255, 255, 0.1)',
-  backdropFilter: 'blur(10px)',
-  border: `2px solid ${color}20`,
-  borderTop: `4px solid ${color}`,
-  boxShadow: theme.shadows[3],
-  transition: 'all 0.3s ease-in-out',
+const StyledColumn = styled('div')(({ theme, color }) => ({
+  minWidth: '350px',
+  maxWidth: '350px',
+  margin: '0 10px',
+  border: `2px solid ${color}`,
+  // Enhanced styling with curved corners and subtle shadow
+  borderRadius: theme.spacing(2), // Curved corners
+  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)', // Subtle shadow
+  backgroundColor: theme.palette.background.paper, // Clean background
+  overflow: 'hidden', // Keep content within rounded corners
+  transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out', // Smooth transitions
   '&:hover': {
-    transform: 'translateY(-2px)',
-    boxShadow: theme.shadows[6],
-    border: `2px solid ${color}40`,
+    transform: 'translateY(-2px)', // Subtle lift on hover
+    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.15)', // Enhanced shadow on hover
   },
 }));
 
@@ -60,15 +59,13 @@ const CardCount = styled(Box)(({ theme }) => ({
   color: 'white',
 }));
 
-const DroppableArea = styled(Box, {
-  shouldForwardProp: (prop) => prop !== 'isDraggingOver'
-})(({ theme, isDraggingOver, color }) => ({
+const DroppableArea = styled('div')(({ theme, isDraggingOver, color }) => ({
   minHeight: '500px',
-  padding: theme.spacing(1),
-  borderRadius: theme.spacing(1),
-  backgroundColor: isDraggingOver ? `${color}10` : 'transparent',
-  border: isDraggingOver ? `2px dashed ${color}60` : '2px dashed transparent',
-  transition: 'all 0.3s ease-in-out',
+  padding: '12px',
+  borderRadius: theme.spacing(1.5), // Slightly rounded to match column style
+  margin: theme.spacing(0.5), // Small margin from column edges
+  backgroundColor: isDraggingOver ? `${color}08` : 'transparent', // Subtle highlight when dragging
+  transition: 'background-color 0.2s ease-in-out', // Smooth transition
 }));
 
 const EmptyState = styled(Box)(({ theme }) => ({
@@ -85,7 +82,6 @@ const EmptyState = styled(Box)(({ theme }) => ({
 const KanbanColumn = ({ columnId, title, color, cards, totalCardCount, onViewLesson, hidden = false }) => {
   return (
     <StyledColumn 
-      elevation={3} 
       color={color}
       style={{ display: hidden ? 'none' : 'block' }}
     >
@@ -116,15 +112,25 @@ const KanbanColumn = ({ columnId, title, color, cards, totalCardCount, onViewLes
                 </Typography>
               </EmptyState>
             ) : (
-              cards.map((card, index) => (
-                <LessonCard 
-                  key={card.id}
-                  card={card}
-                  index={index}
-                  columnId={columnId}
-                  onViewLesson={onViewLesson}
-                />
-              ))
+              cards.map((card, index) => {
+                // Only log if there's a potential issue
+                if (!card.id || index < 0) {
+                  console.error(`🚨 Issue with card in ${columnId}:`, {
+                    cardId: card.id,
+                    index: index,
+                    subject: card.subject
+                  });
+                }
+                return (
+                  <LessonCard 
+                    key={card.id}
+                    card={card}
+                    index={index}
+                    columnId={columnId}
+                    onViewLesson={onViewLesson}
+                  />
+                );
+              })
             )}
             {provided.placeholder}
           </DroppableArea>
