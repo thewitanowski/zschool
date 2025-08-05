@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import axios from 'axios';
+import api from '../api';
 import {
   Box,
   Typography,
@@ -181,7 +181,7 @@ const KanbanBoard = () => {
                 const moduleId = card.moduleId;
                 
                 // Make targeted API call with correct format: course_id/module_id/module_item_id
-                const response = await axios.get(`/api/v1/canvas/lesson-status/${card.courseId}/${moduleId}/${moduleItemId}`);
+                const response = await api.get(`/api/v1/canvas/lesson-status/${card.courseId}/${moduleId}/${moduleItemId}`);
                 
                 if (response.data.success) {
                   const canvasCompleted = response.data.completed || false;
@@ -237,7 +237,7 @@ const KanbanBoard = () => {
   const fetchUserProfile = async () => {
     try {
       // Now using the real API call since backend is working
-      const response = await axios.get('/api/v1/user/profile');
+              const response = await api.get('/api/v1/user/profile');
       
       if (response?.data?.first_name) {
         setUserProfile(response.data);
@@ -260,7 +260,7 @@ const KanbanBoard = () => {
       
       if (!sessionId) {
         // Generate new session ID
-        const response = await axios.get('/api/v1/board-state/session');
+        const response = await api.get('/api/v1/board-state/session');
         sessionId = response.data.session_id;
         localStorage.setItem('zschool_session_id', sessionId);
         console.log('Generated new session ID:', sessionId);
@@ -291,12 +291,12 @@ const KanbanBoard = () => {
       // Try to get real data first, fallback to mock data
       let response;
       try {
-        response = await axios.get(`/api/v1/week-plan/latest?force_refresh=${forceRefresh}`, {
+        response = await api.get(`/api/v1/week-plan/latest?force_refresh=${forceRefresh}`, {
           headers
         });
       } catch (err) {
         console.warn('Failed to fetch real data, using mock data:', err);
-        response = await axios.get('/api/v1/week-plan/mock');
+                  response = await api.get('/api/v1/week-plan/mock');
       }
       
       const planData = response.data.data;
@@ -711,7 +711,7 @@ const KanbanBoard = () => {
     try {
       setSavingState(true);
       
-      await axios.post('/api/v1/board-state/save', 
+      await api.post('/api/v1/board-state/save', 
         {
           board_data: newBoardData,
           weekly_plan_id: 1 // Using default ID for mock data
@@ -878,7 +878,7 @@ const KanbanBoard = () => {
     }
 
     try {
-      await axios.delete('/api/v1/board-state/clear', {
+      await api.delete('/api/v1/board-state/clear', {
         headers: { 'user-session': userSession },
         params: { weekly_plan_id: 1 }
       });

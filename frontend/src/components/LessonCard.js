@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { Draggable } from '@hello-pangea/dnd';
 import {
   Card,
@@ -201,7 +201,7 @@ const LessonCard = ({ card, index, columnId, onViewLesson }) => {
         console.log('🔍 Checking conversion status:', { courseId: card.courseId, pageSlug });
         
         try {
-          const response = await axios.get(
+          const response = await api.get(
             `/api/v1/courses/${card.courseId}/pages/${pageSlug}/status`
           );
           

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import {
   Dialog,
   DialogTitle,
@@ -449,7 +449,7 @@ const LessonViewer = ({
       // Phase 1.4: Handle AI-converted lessons
       if (isAiConverted && courseId && pageSlug) {
         console.log('🤖 Fetching AI-converted lesson content:', { courseId, pageSlug });
-        response = await axios.get(`/api/v1/courses/${courseId}/pages/${pageSlug}`);
+        response = await api.get(`/api/v1/courses/${courseId}/pages/${pageSlug}`);
         
         if (response?.data?.components) {
           setAiConvertedContent(response.data);
@@ -463,19 +463,19 @@ const LessonViewer = ({
       // Existing logic for other lesson types
       if (demoLessonNumber) {
         // Fetch demo lesson content
-        response = await axios.get(`/api/v1/lessons/demo/${demoLessonNumber}`);
+                  response = await api.get(`/api/v1/lessons/demo/${demoLessonNumber}`);
       } else if (lessonId) {
         // Fetch by lesson ID with Canvas status
         try {
-          response = await axios.get(`/api/v1/lessons/${lessonId}/canvas-status`);
+          response = await api.get(`/api/v1/lessons/${lessonId}/canvas-status`);
           setCanvasStatus(response.data.canvas_status);
         } catch (err) {
           // Fallback to regular lesson content
-          response = await axios.get(`/api/v1/lessons/${lessonId}`);
+                      response = await api.get(`/api/v1/lessons/${lessonId}`);
         }
       } else if (courseId && moduleItemId) {
         // Fetch from Canvas
-        response = await axios.get(`/api/v1/lessons/canvas/${courseId}/${moduleItemId}`);
+                  response = await api.get(`/api/v1/lessons/canvas/${courseId}/${moduleItemId}`);
       }
       
       if (response?.data?.data) {
@@ -521,7 +521,7 @@ const LessonViewer = ({
       const testCourseId = courseId || 20564;
       const testModuleItemId = moduleItemId || 12345;
       
-      const response = await axios.post(
+      const response = await api.post(
         `/api/v1/lessons/${lessonId}/mark-done`,
         {
           course_id: testCourseId,
@@ -577,7 +577,7 @@ const LessonViewer = ({
       }
       
       if (lessonId) {
-        response = await axios.post(
+        response = await api.post(
           `/api/v1/lessons/${lessonId}/mark-read`,
           {},
           {
@@ -621,7 +621,7 @@ const LessonViewer = ({
       setActionLoading('sync');
       
       // Refresh lesson with Canvas status
-      const response = await axios.get(`/api/v1/lessons/${lessonId}/canvas-status`);
+      const response = await api.get(`/api/v1/lessons/${lessonId}/canvas-status`);
       
       if (response.data.status === 'success') {
         setCanvasStatus(response.data.canvas_status);
