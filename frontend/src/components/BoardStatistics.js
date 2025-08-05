@@ -35,6 +35,17 @@ const StatsContainer = styled(Paper)(({ theme }) => ({
   backdropFilter: 'blur(10px)',
 }));
 
+const SimpleTag = styled(Box)(({ theme, bgcolor = '#e0e0e0', color = '#333' }) => ({
+  display: 'inline-block',
+  padding: theme.spacing(0.5, 1),
+  borderRadius: theme.spacing(1),
+  backgroundColor: bgcolor,
+  color: color,
+  fontSize: '0.75rem',
+  fontWeight: 500,
+  margin: theme.spacing(0.25),
+}));
+
 const StatCard = styled(Box)(({ theme }) => ({
   height: '100%',
   borderRadius: theme.spacing(2),

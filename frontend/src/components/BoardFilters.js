@@ -97,7 +97,7 @@ const BoardFilters = ({
   
   const statistics = useMemo(() => {
     const allCards = Object.values(boardData).flat();
-    const filteredCards = Object.values(filteredBoardData).flat();
+    const filteredCards = Object.values(boardData).flat();
     
     const subjectCounts = {};
     const statusCounts = {
@@ -241,8 +241,8 @@ const BoardFilters = ({
         {Object.entries(statistics.statusCounts).map(([status, count]) => (
           <SimpleTag
             key={status}
-            bgcolor={statusCounts[status] > 0 ? '#4CAF50' : '#E0E0E0'}
-            color={statusCounts[status] > 0 ? 'white' : 'text.secondary'}
+            bgcolor={statistics.statusCounts[status] > 0 ? '#4CAF50' : '#E0E0E0'}
+            color={statistics.statusCounts[status] > 0 ? 'white' : 'text.secondary'}
           >
             {status.replace('-', ' ')}: {count}
           </SimpleTag>
@@ -273,10 +273,10 @@ const BoardFilters = ({
                       {selected.map((value) => (
                         <SimpleTag
                           key={value}
-                          bgcolor={subjectCounts[value] > 0 ? '#4CAF50' : '#E0E0E0'}
-                          color={subjectCounts[value] > 0 ? 'white' : 'text.secondary'}
+                          bgcolor={statistics.subjectCounts[value] > 0 ? '#4CAF50' : '#E0E0E0'}
+                          color={statistics.subjectCounts[value] > 0 ? 'white' : 'text.secondary'}
                         >
-                          {value} ({subjectCounts[value] || 0})
+                          {value} ({statistics.subjectCounts[value] || 0})
                         </SimpleTag>
                       ))}
                     </Box>
@@ -285,10 +285,10 @@ const BoardFilters = ({
                   {availableSubjects.map((subject) => (
                     <MenuItem key={subject} value={subject}>
                       <SimpleTag
-                        bgcolor={subjectCounts[subject] > 0 ? '#4CAF50' : '#E0E0E0'}
-                        color={subjectCounts[subject] > 0 ? 'white' : 'text.secondary'}
+                        bgcolor={statistics.subjectCounts[subject] > 0 ? '#4CAF50' : '#E0E0E0'}
+                        color={statistics.subjectCounts[subject] > 0 ? 'white' : 'text.secondary'}
                       >
-                        {subject} ({subjectCounts[subject] || 0})
+                        {subject} ({statistics.subjectCounts[subject] || 0})
                       </SimpleTag>
                     </MenuItem>
                   ))}
@@ -307,8 +307,8 @@ const BoardFilters = ({
                       {selected.map((value) => (
                         <SimpleTag
                           key={value} 
-                          bgcolor={statusCounts[value] > 0 ? '#4CAF50' : '#E0E0E0'}
-                          color={statusCounts[value] > 0 ? 'white' : 'text.secondary'}
+                          bgcolor={statistics.statusCounts[value] > 0 ? '#4CAF50' : '#E0E0E0'}
+                          color={statistics.statusCounts[value] > 0 ? 'white' : 'text.secondary'}
                         >
                           {value.replace('-', ' ')}
                         </SimpleTag>
@@ -319,10 +319,10 @@ const BoardFilters = ({
                   {availableStatuses.map((status) => (
                     <MenuItem key={status} value={status}>
                       <SimpleTag
-                        bgcolor={statusCounts[status] > 0 ? '#4CAF50' : '#E0E0E0'}
-                        color={statusCounts[status] > 0 ? 'white' : 'text.secondary'}
+                        bgcolor={statistics.statusCounts[status] > 0 ? '#4CAF50' : '#E0E0E0'}
+                        color={statistics.statusCounts[status] > 0 ? 'white' : 'text.secondary'}
                       >
-                        {status.replace('-', ' ')} ({statusCounts[status]})
+                        {status.replace('-', ' ')} ({statistics.statusCounts[status]})
                       </SimpleTag>
                     </MenuItem>
                   ))}
