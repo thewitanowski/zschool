@@ -13,7 +13,7 @@ from ai_service import ai_service
 from week_plan_service import week_plan_service
 from board_state_service import board_state_service
 from lesson_content_service import lesson_content_service
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
 from user_service import UserService
 from converted_page_service import ConvertedPageService
@@ -72,7 +72,7 @@ async def health_check():
         db = next(get_db())
         try:
             # Simple query to verify database connectivity
-            db.execute("SELECT 1")
+            db.execute(text("SELECT 1"))
             db_status = "healthy"
         except Exception as db_error:
             db_status = f"unhealthy: {str(db_error)}"
