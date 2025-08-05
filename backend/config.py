@@ -11,7 +11,7 @@ class Settings:
         if self.environment == "production":
             # Add your production frontend URLs here
             return [
-                "https://your-frontend-domain.railway.app",  # Railway frontend
+                "https://zschool.up.railway.app/",  # Railway frontend
                 "https://your-frontend-domain.vercel.app",   # Vercel frontend
                 "https://your-frontend-domain.netlify.app",  # Netlify frontend
                 # Add your custom domain when you have one
